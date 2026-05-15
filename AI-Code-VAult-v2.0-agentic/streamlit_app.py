@@ -94,7 +94,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
 def load_backend_modules():
     """Load all backend modules with caching for performance optimization."""
     import db_connector as db  # type: ignore
-    from repo_scanner import get_repo_chunks, _log_debug  # type: ignore
+    from repo_scanner import get_repo_chunks, _log_debug, check_repo_accessible  # type: ignore
     from ai_parser import parse_code_chunk, generate_embedding  # type: ignore
     from file_processor import extract_text_from_file, chunk_text  # type: ignore
     import agent as agent_module  # type: ignore
@@ -113,6 +113,7 @@ def load_backend_modules():
         'FileMetadata': db.FileMetadata,
         'Satellite': db.Satellite,
         'KeyPool': db.KeyPool,
+        'ScanJob': db.ScanJob,
         # Backend Functions
         'get_repo_chunks': get_repo_chunks,
         '_log_debug': _log_debug,
@@ -121,7 +122,8 @@ def load_backend_modules():
         'extract_text_from_file': extract_text_from_file,
         'chunk_text': chunk_text,
         'agent': agent_module,
-        'run_agent': agent_module.run_agent
+        'run_agent': agent_module.run_agent,
+        'run_ingest_agent': agent_module.run_ingest_agent
     }
 
 # Load backend and extract commonly used items
@@ -137,6 +139,7 @@ ChatMessage = backend['ChatMessage']
 FileMetadata = backend['FileMetadata']
 Satellite = backend['Satellite']
 KeyPool = backend['KeyPool']
+ScanJob = backend.get('ScanJob')
 get_repo_chunks = backend['get_repo_chunks']
 _log_debug = backend['_log_debug']
 parse_code_chunk = backend['parse_code_chunk']
@@ -1194,7 +1197,7 @@ if user_role != 'Admin':
         st.sidebar.info("System activity logs are currenty empty.")
 
 # --- Functions ---
-def background_scan_task(repo_url, user_id, abort_event):
+def background_scan_task(repo_url, user_id, abort_event, job_uuid: str = None):
     """Execution logic in a background thread with real-time DB progress updates"""
     engine = get_engine()
 
@@ -1210,9 +1213,28 @@ def background_scan_task(repo_url, user_id, abort_event):
         except Exception:
             pass
 
+    def _update_job(prog: int, status: str, started: bool = False, finished: bool = False, temp_dir: str = None):
+        try:
+            with Session(engine) as s:
+                if job_uuid:
+                    job = s.query(ScanJob).filter(ScanJob.job_uuid == job_uuid).first()
+                    if job:
+                        job.progress = int(prog)
+                        job.status = status
+                        if temp_dir:
+                            job.temp_dir = temp_dir
+                        if started and not job.started_at:
+                            job.started_at = datetime.now()
+                        if finished:
+                            job.finished_at = datetime.now()
+                        s.commit()
+        except Exception:
+            pass
+
     _log_debug(f"WORKER: Started background_scan_task for {repo_url} (User: {user_id})")
     try:
         _update_db(0, "Scanning Repository & Extracting Chunks...")
+        _update_job(0, "Preparing: Scanning repository...", started=True)
         all_chunks = get_repo_chunks(repo_url)
         
         if not all_chunks:
@@ -1232,6 +1254,7 @@ def background_scan_task(repo_url, user_id, abort_event):
                         db_user.scan_status = "Halted by User."
                         db_user.scan_progress = 0
                         scan_session.commit()
+                    _update_job(0, "Halted by User.", finished=True)
                     return
 
                 parsed = parse_code_chunk(chunk)
@@ -1280,9 +1303,11 @@ def background_scan_task(repo_url, user_id, abort_event):
                         db_user.scan_progress = prog
                         db_user.scan_status = stat
                         scan_session.commit() # Push update live to DB
+                        _update_job(prog, stat)
                         background_scan_task.last_ui_update = current_time
 
             _update_db(100, f"Complete — {success_count} code hubs indexed.")
+            _update_job(100, f"Complete — {success_count} code hubs indexed.", finished=True)
             _log_debug(f"WORKER: Task Complete. Indexed {success_count} chunks.")
 
     except Exception as e:
@@ -1423,45 +1448,48 @@ def run_scan(repo_url):
     st.session_state.scan_status = "Preparing: Validating repository..."
     st.session_state.scan_progress = 0
 
-    # Quick synchronous validation: ensure target contains code files before starting heavy background work
-    quick_chunks = []
-    validation_error = None
+    # Create a ScanJob entry to track this ingestion (does not replace User, but centralizes job state)
+    engine = get_engine()
+    job_uuid = str(uuid.uuid4())
     try:
-        quick_chunks = get_repo_chunks(repo_url)
+        with Session(engine) as s:
+            new_job = ScanJob(
+                job_uuid=job_uuid,
+                user_id=user_id,
+                repo_url=repo_url,
+                status='Queued',
+                progress=0,
+            )
+            s.add(new_job)
+            s.commit()
     except Exception as e:
-        validation_error = str(e)
-        _log_debug(f"RUN_SCAN: quick validation failed: {validation_error}")
+        _log_debug(f"RUN_SCAN: failed to create ScanJob: {e}")
 
-    if not quick_chunks:
-        # Provide helpful error message based on input type and failure reason
-        if repo_url.startswith('https://github.com') or repo_url.startswith('git@github.com'):
-            if validation_error and 'Failed to clone' in validation_error:
-                user_msg = f"Failed to clone GitHub repo. Check:\n1. URL is correct: {repo_url}\n2. Network connection is active\n3. Repo is public or credentials configured"
-            else:
-                user_msg = f"No code files found in GitHub repo {repo_url}. Ensure the repo has .py, .js, .ts, or other supported code files."
-        else:
-            if validation_error and 'does not exist' in validation_error:
-                user_msg = f"Local path does not exist: {repo_url}\n\nProvide a valid local directory path or a GitHub URL."
-            else:
-                user_msg = f"No supported code files found at {repo_url}.\n\nSupported: .py, .js, .ts, .jsx, .tsx, .java, .cpp, .c, .go, .rb, .php"
-        
-        # Update DB and UI with diagnostic error
-        with Session(engine) as scan_session:
-            db_user = scan_session.query(User).filter(User.id == user_id).first()
-            if db_user:
-                db_user.scan_status = f"Error: {user_msg.split(chr(10))[0]}"
-                db_user.scan_progress = 0
-                scan_session.commit()
-
-        st.error(user_msg)
-        st.session_state.scan_status = user_msg.split('\n')[0]
+    # GitHub repos are validated inside the background scanner, which can now
+    # fall back to ZIP download and report the real failure reason if needed.
+    if not repo_url or not repo_url.strip():
+        st.error("Please provide a valid URL or Path.")
         st.session_state.is_scanning = False
         return
+
+    if not (repo_url.startswith('https://github.com') or repo_url.startswith('git@github.com')):
+        if not os.path.exists(repo_url):
+            user_msg = f"Local path does not exist: {repo_url}\n\nProvide a valid local directory path or a GitHub URL."
+            with Session(engine) as scan_session:
+                db_user = scan_session.query(User).filter(User.id == user_id).first()
+                if db_user:
+                    db_user.scan_status = f"Error: {user_msg.split(chr(10))[0]}"
+                    db_user.scan_progress = 0
+                    scan_session.commit()
+            st.error(user_msg)
+            st.session_state.scan_status = user_msg.split('\n')[0]
+            st.session_state.is_scanning = False
+            return
 
     # Reset kill-switch and start background worker
     st.session_state.abort_event.clear()
     st.session_state.is_scanning = True
-    thread = threading.Thread(target=background_scan_task, args=(repo_url, user_id, st.session_state.abort_event))
+    thread = threading.Thread(target=background_scan_task, args=(repo_url, user_id, st.session_state.abort_event, job_uuid))
     thread.daemon = True
     thread.start()
 

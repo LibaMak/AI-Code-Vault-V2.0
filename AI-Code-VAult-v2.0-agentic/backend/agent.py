@@ -34,6 +34,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from groq import Groq
 from sqlalchemy.orm import Session
+import traceback
+from repo_scanner import get_repo_chunks, _log_debug
+from ai_parser import parse_code_chunk
+from embeddings import get_embeddings
+from db_connector import get_engine, Hub, ScanJob
 
 # Load .env from project root so GROQ_API_KEY is available when running Streamlit.
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -836,3 +841,86 @@ def run_agent(user_message: str, chat_history: list, backend: dict) -> dict:
             tools_used=[],
             active_agent="SupervisorAgent",
         ).to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Ingestion agent (ReAct-style minimal orchestrator)
+# ---------------------------------------------------------------------------
+def _update_scanjob(job_uuid: str, progress: int = None, status: str = None, finished: bool = False):
+    try:
+        if not job_uuid:
+            return
+        with Session(get_engine()) as s:
+            job = s.query(ScanJob).filter(ScanJob.job_uuid == job_uuid).first()
+            if not job:
+                return
+            if progress is not None:
+                job.progress = int(progress)
+            if status is not None:
+                job.status = status
+            if finished:
+                job.finished_at = datetime.now()
+            s.commit()
+    except Exception:
+        _log_debug("AGENT: failed to update ScanJob")
+
+
+def run_ingest_agent(repo_url: str, user_id: int, job_uuid: str = None, max_chunks: int = None) -> dict:
+    """Run a deterministic ingest pipeline as an agentic task.
+
+    This function coordinates scanning, parsing, embedding, and storing with
+    job progress updates. It is a synchronous, single-pass agent useful for
+    turning a RAG pipeline into a tool-driven flow.
+    """
+    try:
+        _log_debug(f"INGEST_AGENT: starting ingest for {repo_url} (user {user_id})")
+        _update_scanjob(job_uuid, progress=1, status='Agent: scanning')
+        chunks = get_repo_chunks(repo_url)
+        total = len(chunks)
+        if total == 0:
+            _update_scanjob(job_uuid, progress=0, status='Agent: no chunks', finished=True)
+            return {'status': 'no_chunks', 'total_chunks': 0}
+
+        # Optionally limit
+        if max_chunks:
+            chunks = chunks[:max_chunks]
+            total = len(chunks)
+
+        _update_scanjob(job_uuid, progress=10, status='Agent: parsing')
+        parsed = [parse_code_chunk(c) for c in chunks]
+
+        _update_scanjob(job_uuid, progress=45, status='Agent: embedding')
+        embeddings = get_embeddings([p['hub'].get('code_snippet', '') for p in parsed])
+
+        _update_scanjob(job_uuid, progress=70, status='Agent: storing')
+        stored = 0
+        with Session(get_engine()) as s:
+            for p, emb in zip(parsed, embeddings):
+                hub = p.get('hub', {})
+                key = hub.get('hash_key') or hub.get('file_path') or 'unknown'
+                existing = s.query(Hub).filter(Hub.hash_key == key, Hub.user_id == user_id).first()
+                if existing:
+                    existing.code_snippet = hub.get('code_snippet', existing.code_snippet)
+                    existing.embedding_vector = emb
+                    existing.repo_url = repo_url
+                    s.merge(existing)
+                else:
+                    new = Hub(
+                        hash_key=key,
+                        code_snippet=hub.get('code_snippet', ''),
+                        embedding_vector=emb,
+                        user_id=user_id,
+                        repo_url=repo_url,
+                    )
+                    s.add(new)
+                stored += 1
+            s.commit()
+
+        _update_scanjob(job_uuid, progress=100, status=f'Agent: complete — {stored} hubs', finished=True)
+        _log_debug(f"INGEST_AGENT: complete for {repo_url} — stored {stored}")
+        return {'status': 'complete', 'stored': stored, 'total': total}
+    except Exception as e:
+        _log_debug(f"INGEST_AGENT error: {e}")
+        _log_debug(traceback.format_exc())
+        _update_scanjob(job_uuid, progress=0, status=f'Agent: failure {e}', finished=True)
+        return {'status': 'error', 'error': str(e)}

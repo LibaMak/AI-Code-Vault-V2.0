@@ -100,6 +100,23 @@ class KeyPool(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
+
+class ScanJob(Base):
+    """Background scan job tracking model."""
+    __tablename__ = 'scan_jobs'
+
+    id = Column(Integer, primary_key=True)
+    job_uuid = Column(String, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    repo_url = Column(String)
+    status = Column(String, default='Pending')
+    progress = Column(Integer, default=0)
+    temp_dir = Column(String, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
 # ============================================================================
 # DATABASE INITIALIZATION & MIGRATION
 # ============================================================================

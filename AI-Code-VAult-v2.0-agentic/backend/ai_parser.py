@@ -1,18 +1,19 @@
 import os
 import json
+import ast
+from embeddings import get_embedding as generate_embedding
 import numpy as np
 from groq import Groq
 from dotenv import load_dotenv
+from typing import Dict, Any
 
 load_dotenv()
 
-# GROQ Configuration
+# GROQ Configuration (client optional)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-PRIMARY_MODEL = "llama-3.3-70b-versatile"    # Heavy tasks - code analysis, parsing
-FAST_MODEL = "llama-3.1-8b-instant"           # Light tasks - quick operations
+PRIMARY_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+FAST_MODEL = os.getenv("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
 
-# Initialize GROQ client lazily and fail-safe: do not raise on missing/invalid API key.
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = None
 if GROQ_API_KEY:
     try:
@@ -23,137 +24,175 @@ if GROQ_API_KEY:
 else:
     print("[GROQ] Warning: GROQ_API_KEY not set; using local fallback parser only.")
 
-SYSTEM_PROMPT = """
-You are AI Knowledge Vault Parser. You receive chunks of code or technical documentation and must output a JSON object describing it.
-Identify the core object as a 'hub', its outgoing calls/references as 'links', and metadata as 'satellites'.
-Identify the 'type' of the hub as one of: 'function', 'class', 'component', 'module', 'document', or 'chunk'.
-
-Output ONLY valid JSON matching this schema:
-{
-  "hub": {
-    "hash_key": "string (name of function, class, or document section)",
-    "type": "string (from the list above)"
-  },
-  "links": [
-    { "target_hash": "string (name of entity being referenced)", "relationship_type": "calls or references" }
-  ],
-  "satellite": {
-    "metrics": {
-      "lines_of_code": integer,
-      "parameters": ["list", "of", "args/props"],
-      "complexity_estimate": "low/medium/high"
-    }
-  }
-}
+"""Embedding provider is delegated to `backend/embeddings.py`.
+`generate_embedding` is imported above as an alias for `get_embedding`.
 """
 
-def generate_embedding(text):
-    """
-    Generate deterministic mock vector embeddings using SHA256.
-    No external API needed — fully local and free.
-    """
-    if not text:
-        return np.zeros(1536).tolist()
-    import hashlib as _hashlib
 
-    hash_obj = _hashlib.sha256(text.encode('utf-8'))
-    seed = int(hash_obj.hexdigest(), 16) % (2**32)
-    np.random.seed(seed)
-    vector = np.random.rand(1536).tolist()
-    return vector
+def _estimate_complexity_from_ast(node: ast.AST) -> str:
+    """Simple heuristic to estimate complexity from AST nodes."""
+    counter = 0
+    for n in ast.walk(node):
+        if isinstance(n, (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.IfExp, ast.BoolOp)):
+            counter += 1
+    if counter < 5:
+        return 'Low'
+    if counter < 15:
+        return 'Medium'
+    return 'High'
 
-def fallback_parse(chunk):
-    """
-    Fallback parser if GROQ API fails.
-    Ensures app always works even without API.
-    """
-    code_text = chunk.get("code", "")
-    # Compute embedding robustly: prefer `generate_embedding`, but handle any NameError
+
+def parse_python_code(code_text: str, file_path: str) -> Dict[str, Any]:
+    """Parse Python code using AST to extract deterministic metadata."""
     try:
-        embedding = generate_embedding(code_text)
-    except Exception as ee:
-        print(f"[FALLBACK] generate_embedding failed: {ee}. Using inline fallback.")
-        try:
-            import hashlib as _hashlib
-            if code_text:
-                _hash = _hashlib.sha256(code_text.encode('utf-8'))
-                seed = int(_hash.hexdigest(), 16) % (2**32)
-                np.random.seed(seed)
-                embedding = np.random.rand(1536).tolist()
-            else:
-                embedding = [0.0] * 1536
-        except Exception as _e:
-            print(f"[FALLBACK] inline embedding also failed: {_e}. Using zeros.")
-            embedding = [0.0] * 1536
+        tree = ast.parse(code_text)
+    except Exception:
+        # parsing failure — return generic chunk
+        return {
+            'hub': {
+                'hash_key': os.path.basename(file_path) if file_path else 'python_chunk',
+                'type': 'module',
+                'code_snippet': code_text,
+                'file_path': file_path,
+                'embedding': generate_embedding(code_text)
+            },
+            'links': [],
+            'satellite': {
+                'metrics': {
+                    'lines_of_code': len(code_text.splitlines()),
+                    'parameters': [],
+                    'complexity_estimate': 'Medium'
+                }
+            }
+        }
+
+    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
+
+    # Determine primary hub
+    if len(funcs) == 1 and not classes:
+        primary = funcs[0]
+        hub_type = 'function'
+        hash_key = primary.name
+        params = [a.arg for a in primary.args.args]
+    elif len(classes) == 1 and not funcs:
+        primary = classes[0]
+        hub_type = 'class'
+        hash_key = primary.name
+        params = []
+    else:
+        hub_type = 'module'
+        hash_key = os.path.basename(file_path) if file_path else 'module'
+        params = []
+
+    # Find simple call references (function names) as links
+    calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                calls.append({'target_hash': node.func.id, 'relationship_type': 'calls'})
+            elif isinstance(node.func, ast.Attribute):
+                calls.append({'target_hash': node.func.attr, 'relationship_type': 'calls'})
+
+    complexity = _estimate_complexity_from_ast(tree)
 
     return {
-        "hub": {
-            "hash_key": chunk.get("name", "unknown_entity"),
-            "type": chunk.get("type", "chunk"),
-            "code_snippet": code_text,
-            "file_path": chunk.get("file_path", "unknown"),
-            "embedding": embedding
+        'hub': {
+            'hash_key': hash_key,
+            'type': hub_type,
+            'code_snippet': code_text,
+            'file_path': file_path,
+            'embedding': generate_embedding(code_text)
         },
-        "links": [],
-        "satellite": {
-            "metrics": {
-                "lines_of_code": len(code_text.splitlines()),
-                "parameters": [],
-                "complexity_estimate": "medium"
+        'links': calls,
+        'satellite': {
+            'metrics': {
+                'lines_of_code': len(code_text.splitlines()),
+                'parameters': params,
+                'complexity_estimate': complexity
             }
         }
     }
 
-def parse_code_chunk(chunk):
+
+def fallback_parse(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    """Fallback parser when GROQ is not available or parsing fails."""
+    code_text = chunk.get('code', '')
+    embedding = generate_embedding(code_text)
+
+    return {
+        'hub': {
+            'hash_key': chunk.get('name', 'unknown_entity'),
+            'type': chunk.get('type', 'chunk'),
+            'code_snippet': code_text,
+            'file_path': chunk.get('file_path', 'unknown'),
+            'embedding': embedding
+        },
+        'links': [],
+        'satellite': {
+            'metrics': {
+                'lines_of_code': len(code_text.splitlines()),
+                'parameters': [],
+                'complexity_estimate': 'Medium'
+            }
+        }
+    }
+
+
+def parse_code_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse a code chunk.
+
+    Behavior:
+    - For Python files, use a fast local AST-based parser (deterministic, zero-cost).
+    - For other files, prefer the GROQ client when available; otherwise fallback.
     """
-    Parse a code chunk using GROQ LLM.
-    Falls back to fallback_parse() if API fails.
-    """
-    code_text = chunk.get("code")
-    
-    # Empty chunk check
+    code_text = chunk.get('code')
     if not code_text or not code_text.strip():
         return fallback_parse(chunk)
-    
-    file_path = chunk.get("file_path", "")
-    file_ext = file_path.split('.')[-1].lower() if '.' in file_path else 'text'
-    print(f"[GROQ] Parsing {file_ext} chunk: {chunk.get('name')} from {file_path}")
 
+    file_path = chunk.get('file_path', '')
+    file_ext = file_path.split('.')[-1].lower() if '.' in file_path else 'text'
+
+    # Fast path: local deterministic parsing for Python
+    if file_ext == 'py' or file_ext == 'python' or chunk.get('type') == '.py':
+        try:
+            return parse_python_code(code_text, file_path)
+        except Exception as e:
+            print(f"[PARSER] AST parse error: {e}. Falling back.")
+            return fallback_parse(chunk)
+
+    # Non-Python: prefer GROQ if configured
+    if client is None:
+        return fallback_parse(chunk)
+
+    # Attempt GROQ parsing for non-Python file types
     try:
-        if client is None:
-            raise RuntimeError("GROQ client not configured; falling back to local parser")
+        SYSTEM_PROMPT = """
+You are AI Knowledge Vault Parser. You receive chunks of code or technical documentation and must output a JSON object describing it.
+Output ONLY valid JSON with keys: hub, links, satellite.
+"""
 
         response = client.chat.completions.create(
             model=PRIMARY_MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"File Extension: {file_ext}\nContent:\n```{file_ext}\n{code_text}\n```"}
+                {'role': 'system', 'content': SYSTEM_PROMPT},
+                {'role': 'user', 'content': f'File Extension: {file_ext}\nContent:\n```{file_ext}\n{code_text}\n```'}
             ],
-            temperature=0.2,        # Low temp = precise, no hallucinations
+            temperature=0.2,
             max_tokens=1000,
             timeout=15
         )
 
         result_text = response.choices[0].message.content
-
-        # Strip markdown if GROQ wraps in ```json
-        if result_text.startswith("```"):
-            result_text = result_text.strip("`").strip()
-            if result_text.startswith("json"):
+        if result_text.startswith('```'):
+            result_text = result_text.strip('`').strip()
+            if result_text.startswith('json'):
                 result_text = result_text[4:].strip()
 
         parsed = json.loads(result_text)
-
-        # Inject standard fields
         parsed['hub']['code_snippet'] = code_text
         parsed['hub']['file_path'] = file_path
         parsed['hub']['embedding'] = generate_embedding(code_text)
-
         return parsed
-
-    except json.JSONDecodeError:
-        print(f"[GROQ] JSON parse error for {chunk.get('name')}. Using fallback.")
-        return fallback_parse(chunk)
-    except Exception as e:
-        print(f"[GROQ] API error for {chunk.get('name')}. Using fallback.")
+    except Exception:
         return fallback_parse(chunk)
