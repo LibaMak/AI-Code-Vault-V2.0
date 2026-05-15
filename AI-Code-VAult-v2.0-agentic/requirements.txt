@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+streamlit-lottie
+requests
+groq
+python-dotenv
+sqlalchemy
+GitPython
+PyPDF2
+python-docx
+bcrypt
+streamlit-authenticator
+pyyaml
+watchdog
+extra-streamlit-components

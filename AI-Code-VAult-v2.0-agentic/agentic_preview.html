@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Code Vault 2.0 — Agentic AI Studio Preview</title>
+<style>
+  :root{
+    --bg:#05070a;--surface:rgba(13,17,23,.84);--surface2:rgba(21,27,35,.96);
+    --text:#f8fbff;--muted:rgba(248,251,255,.68);--cyan:#00f2ff;--purple:#7000ff;
+    --border:rgba(255,255,255,.12);--green:#00ffcc;--warn:#ffcc66;
+  }
+  *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;background:radial-gradient(circle at top left,rgba(0,242,255,.16),transparent 32%),radial-gradient(circle at bottom right,rgba(112,0,255,.18),transparent 30%),var(--bg);color:var(--text);min-height:100vh;}
+  .layout{display:grid;grid-template-columns:280px 1fr;min-height:100vh}.sidebar{border-right:1px solid var(--border);background:rgba(6,8,12,.9);padding:22px;position:relative;overflow:hidden}.sidebar:before{content:"";position:absolute;width:260px;height:260px;background:rgba(0,242,255,.12);filter:blur(70px);top:-80px;left:-80px}.brand,.nav,.side-card{position:relative}.brand{padding:18px;border:1px solid var(--border);border-radius:18px;background:var(--surface);box-shadow:0 18px 44px rgba(0,0,0,.5);text-align:center;margin-bottom:22px}.brand h2{margin:0;font-size:21px;letter-spacing:.04em}.brand small{color:var(--cyan);font-weight:800}.account{text-align:center;color:var(--muted);font-size:14px;margin:18px 0}.nav button{width:100%;margin:7px 0;padding:13px 14px;text-align:left;border-radius:12px;border:1px solid transparent;background:transparent;color:var(--text);font-weight:700;letter-spacing:.01em}.nav button.active{border-color:rgba(0,242,255,.45);background:linear-gradient(90deg,rgba(0,242,255,.14),rgba(112,0,255,.1));box-shadow:0 0 20px rgba(0,242,255,.12)}.side-card{margin-top:25px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--surface)}.pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 16px var(--green);margin-right:8px}.main{padding:26px 34px}.hero{padding:24px;border:1px solid var(--border);border-radius:24px;background:linear-gradient(135deg,rgba(0,242,255,.09),rgba(112,0,255,.1));box-shadow:0 20px 54px rgba(0,0,0,.46);text-align:center;margin-bottom:26px}.hero h1{font-size:50px;line-height:1;margin:0;background:linear-gradient(90deg,var(--cyan),var(--purple));-webkit-background-clip:text;color:transparent;text-shadow:0 0 24px rgba(0,242,255,.24)}.hero p{margin:12px 0 0;color:var(--muted);font-weight:650}.title-row{display:flex;align-items:center;gap:14px;margin:12px 0 8px}.icon{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(0,242,255,.18),rgba(112,0,255,.18));border:1px solid var(--border);box-shadow:0 0 22px rgba(0,242,255,.12)}.title-row h2{font-size:34px;margin:0}.subtitle{color:var(--muted);margin-bottom:18px}.agent-cards{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:18px 0 24px}.agent{padding:14px;border:1px solid var(--border);border-radius:16px;background:var(--surface);min-height:110px}.agent strong{display:block;color:var(--cyan);font-size:14px;margin-bottom:8px}.agent span{font-size:12px;color:var(--muted);line-height:1.45}.chat-shell{display:grid;grid-template-columns:1fr 330px;gap:18px}.chat{border:1px solid var(--border);border-radius:22px;background:var(--surface);padding:18px;box-shadow:0 18px 46px rgba(0,0,0,.45)}.message{margin:14px 0;padding:16px 18px;border-radius:17px;border:1px solid var(--border);line-height:1.6}.user{background:rgba(112,0,255,.13);margin-left:60px}.assistant{background:rgba(255,255,255,.045);margin-right:20px}.badge{display:inline-flex;gap:8px;align-items:center;padding:9px 12px;border-radius:999px;background:rgba(0,242,255,.1);border:1px solid rgba(0,242,255,.25);color:var(--cyan);font-weight:800;font-size:13px}.diff{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#071017;border:1px solid rgba(0,242,255,.18);border-radius:13px;padding:14px;white-space:pre-wrap;color:#d8fbff;overflow:auto}.add{color:#78f7b2}.del{color:#ff8f9d}.input{margin-top:18px;border:1px solid var(--border);border-radius:16px;padding:15px;color:var(--muted);background:rgba(255,255,255,.04)}.panel{border:1px solid var(--border);border-radius:22px;background:var(--surface2);padding:18px}.panel h3{margin-top:0;color:var(--cyan)}.trace{list-style:none;padding:0;margin:0}.trace li{padding:11px 0;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px;color:var(--muted)}.trace b{color:var(--text)}.download{width:100%;margin-top:14px;padding:13px;border:0;border-radius:13px;background:linear-gradient(90deg,var(--cyan),var(--purple));color:white;font-weight:900}.hint{margin-top:18px;padding:14px;border:1px solid rgba(255,204,102,.28);background:rgba(255,204,102,.08);border-radius:16px;color:#ffe2a0;font-size:14px}@media(max-width:1100px){.agent-cards{grid-template-columns:repeat(2,1fr)}.chat-shell{grid-template-columns:1fr}.layout{grid-template-columns:1fr}.sidebar{display:none}.hero h1{font-size:36px}}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><h2>COMMAND CENTER</h2><small>[SYNC_ACTIVE_V5]</small></div>
+    <div class="account">Account: <b>user@vault.ai</b><br><small>(User)</small></div>
+    <div class="nav">
+      <button>Scan Repository</button><button>Vault Explorer</button><button class="active">Agentic AI Studio</button><button>Analytics Portal</button>
+    </div>
+    <div class="side-card"><span class="pulse"></span><b>Neural Status: Operational</b><br><small style="color:var(--muted)">Vault: vault_v5.db</small></div>
+  </aside>
+  <main class="main">
+    <section class="hero"><h1>AI CODE VAULT V2.0</h1><p>Semantic indexing, retrieval, and architecture review in one vault</p></section>
+    <div class="title-row"><div class="icon">🤖</div><h2>Agentic AI Studio</h2></div>
+    <div class="subtitle">Multi-agent workspace: RAG answers, code editing, review, docs, and test planning over your indexed vault.</div>
+    <section class="agent-cards">
+      <div class="agent"><strong>Supervisor</strong><span>Routes every prompt to the right specialist.</span></div>
+      <div class="agent"><strong>RAG Answer</strong><span>Answers using retrieved vault snippets and source names.</span></div>
+      <div class="agent"><strong>Code Editor</strong><span>Generates safe diffs and can update indexed snippets.</span></div>
+      <div class="agent"><strong>Reviewer</strong><span>Finds bugs, security issues, and performance risks.</span></div>
+      <div class="agent"><strong>Test Strategist</strong><span>Creates test plans, edge cases, and sample tests.</span></div>
+      <div class="agent"><strong>Docs Agent</strong><span>Writes summaries, README notes, and onboarding docs.</span></div>
+    </section>
+    <section class="chat-shell">
+      <div class="chat">
+        <div class="message user"><b>You:</b><br>Edit the login code to improve the error message.</div>
+        <div class="message assistant">
+          <span class="badge">Active specialist: CodeEditorAgent · Tools: search_vault, generate_patch</span>
+          <h3>Proposed edit for <code>auth_page</code></h3>
+          <p>Improves the login failure copy so users know whether to check credentials or create an account, without exposing sensitive authentication details.</p>
+          <div class="diff"><span class="del">- st.error("Explicit Warning: Password match error or User not found!")</span>
+<span class="add">+ st.error("Login failed. Check your email and password, or create a new account if you have not registered yet.")</span></div>
+          <p><b>Not applied automatically.</b> Say <code>apply/save this edit</code> to update the indexed vault snippet.</p>
+          <button class="download">Download generated patch</button>
+        </div>
+        <div class="input">Enter architectural query...</div>
+      </div>
+      <aside class="panel">
+        <h3>Agent trace</h3>
+        <ul class="trace">
+          <li><b>1.</b> Supervisor started routing.</li>
+          <li><b>2.</b> Routed to CodeEditorAgent: Matched editing/refactoring intent.</li>
+          <li><b>3.</b> called <b>search_vault</b> — Located 5 candidate snippets.</li>
+          <li><b>4.</b> <b>generate_patch</b> result — Generated diff with 231 characters.</li>
+        </ul>
+        <div class="hint">Try prompts like:<br>“How does auth work?”<br>“Review ingestion security.”<br>“Create pytest tests.”<br>“Summarize architecture.”</div>
+      </aside>
+    </section>
+  </main>
+</div>
+</body>
+</html>

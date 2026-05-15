@@ -1,0 +1,9 @@
+.env
+# Ignore cloned repos stored under data/repos to avoid nested git repositories
+data/repos/
+# Ignore local SQLite DB files and write-ahead logs (WAL and SHM)
+vault_v5.db
+vault_v5.db-shm
+vault_v5.db-wal
+__pycache__/
+*.pyc
