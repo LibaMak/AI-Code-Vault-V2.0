@@ -1395,14 +1395,41 @@ def process_file_content(uploaded_file, user_id):
         # Universal Ingestion: Use AI Parser for all supported file types
         st.session_state.scan_status = f"Analyzing {filename} with AI..."
         
+        # Save file to a temporary location to allow file_processor to read it
+        import tempfile
+        import os
+        
+        raw_text = ""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
+            
+        try:
+            # Extract text properly based on the file format (PDF, DOCX, etc.)
+            raw_text = extract_text_from_file(tmp_path)
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        
+        # Fallback if extraction failed but it's a text file
+        if not raw_text.strip() and file_ext in ['py', 'js', 'txt', 'md', 'html', 'css', 'json']:
+            raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+            
         # Determine if we need to chunk (for large files) or process atomically
-        raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         if len(raw_text) > 2000:
             chunks = chunk_text(raw_text, chunk_size=1500, overlap=100)
-        else:
+        elif raw_text:
             chunks = [raw_text]
+        else:
+            chunks = []
             
         total_chunks = len(chunks)
+        if total_chunks == 0:
+            st.session_state.scan_status = f"Warning: No text could be extracted from {filename}."
+            st.session_state.is_scanning = False
+            return
+            
         for i, c in enumerate(chunks):
             if st.session_state.abort_event.is_set():
                 session.rollback()
@@ -1687,7 +1714,8 @@ if menu == "Ingest":
                 
     with tab_file:
         allowed_types = ["py", "js", "ts", "jsx", "tsx", "html", "css", "md", "json", "sql", "pdf", "docx", "txt", "csv"]
-        uploaded_file = st.file_uploader("Upload Document / Code", type=allowed_types, help="Drag and drop for instant indexing.")
+        allowed_str = ", ".join(allowed_types).upper()
+        uploaded_file = st.file_uploader(f"Upload Document / Code (Allowed: {allowed_str})", type=allowed_types, help="Drag and drop for instant indexing.")
         if uploaded_file is not None:
             if st.button("Index File", key="btn_index", use_container_width=True):
                 process_file_content(uploaded_file, st.session_state.user['id'])
