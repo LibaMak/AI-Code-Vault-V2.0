@@ -33,4 +33,4 @@ streamlit run streamlit_app.py
 ## Notes
 
 - Do not commit `.env` or real API keys.
-- The CodeEditorAgent edits the indexed vault copy only. Download generated patches to apply them to a real source checkout.
+- The PatchDiffGenerator generates patches for the indexed vault copy only. Download generated patches to apply them to a real source checkout.

@@ -8,6 +8,7 @@
 import os
 import sys
 import json
+import re
 import time
 import threading
 import shutil
@@ -787,6 +788,35 @@ def apply_theme_styles(theme_mode):
 
 apply_theme_styles(st.session_state.vault_theme_mode)
 
+# --- Validation Helpers ---
+_EMAIL_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@"
+    r"[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$"
+)
+
+def _is_valid_email(email: str) -> bool:
+    """RFC-style email check: local@domain.tld, no leading/trailing dots."""
+    if not email or len(email) > 254:
+        return False
+    return bool(_EMAIL_RE.match(email))
+
+def _validate_password(password: str):
+    """Return (ok: bool, message: str) for password strength."""
+    issues = []
+    if len(password) < 8:
+        issues.append("at least 8 characters")
+    if not re.search(r"[A-Z]", password):
+        issues.append("one uppercase letter")
+    if not re.search(r"[a-z]", password):
+        issues.append("one lowercase letter")
+    if not re.search(r"[0-9]", password):
+        issues.append("one digit")
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':""\\|,.<>/?]", password):
+        issues.append("one special character (!@#$%^&*...)")
+    if issues:
+        return False, "Password must contain: " + ", ".join(issues) + "."
+    return True, ""
+
 # --- Login / Signup UI ---
 def auth_page():
     # Subtle Outline 'Return to Homepage' Button
@@ -931,38 +961,42 @@ def auth_page():
                 submitted = st.form_submit_button("Enter Vault", use_container_width=True)
                 
                 if submitted:
-                    try:
-                        user = session.query(User).filter(User.email == email).first()
-                    except Exception as db_err:
-                        st.error(f"DATABASE DIAGNOSTICS: {str(db_err)}")
-                        st.info(f"Target DB: {str(session.bind.url)}")
-                        st.stop()
-                        
-                    # Safely obtain stored password hash from legacy or current column
-                    stored_hash = None
-                    if user:
-                        stored_hash = getattr(user, "password_hash", None) or getattr(user, "hashed_password", None)
-
-                    if user and stored_hash and verify_password(password, stored_hash):
-                        st.session_state.authenticated = True
-                        st.session_state.user = {"id": user.id, "email": user.email, "role": user.role}
-                        st.session_state.menu = "Admin_Dashboard" if user.role == 'Admin' else "Ingest"
-                        
-                        # Handle Persistence
-                        if remember_me:
-                            token = str(uuid.uuid4())
-                            user.session_token = token
-                            session.commit()
-                            import datetime as dt
-                            cookie_manager.set('vault_session_token', token, expires_at=datetime.now() + dt.timedelta(days=7))
-                        
-                        load_chat_history()
-                        st.success(f"Welcome back, {email}!")
-                        st.toast("Login Successful!", icon="✅")
-                        time.sleep(1)
-                        st.rerun()
+                    if not _is_valid_email(email):
+                        st.error("Invalid email. Use a real address like name@example.com")
                     else:
-                        st.error("Explicit Warning: Password match error or User not found!")
+                        try:
+                            user = session.query(User).filter(User.email == email).first()
+                        except Exception as db_err:
+                            st.error(f"DATABASE DIAGNOSTICS: {str(db_err)}")
+                            st.info(f"Target DB: {str(session.bind.url)}")
+                            st.stop()
+                            user = None
+
+                        # Safely obtain stored password hash from legacy or current column
+                        stored_hash = None
+                        if user:
+                            stored_hash = getattr(user, "password_hash", None) or getattr(user, "hashed_password", None)
+
+                        if user and stored_hash and verify_password(password, stored_hash):
+                            st.session_state.authenticated = True
+                            st.session_state.user = {"id": user.id, "email": user.email, "role": user.role}
+                            st.session_state.menu = "Admin_Dashboard" if user.role == 'Admin' else "Ingest"
+
+                            # Handle Persistence
+                            if remember_me:
+                                token = str(uuid.uuid4())
+                                user.session_token = token
+                                session.commit()
+                                import datetime as dt
+                                cookie_manager.set('vault_session_token', token, expires_at=datetime.now() + dt.timedelta(days=7))
+
+                            load_chat_history()
+                            st.success(f"Welcome back, {email}!")
+                            st.toast("Login Successful!", icon="✅")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Explicit Warning: Password match error or User not found!")
         
         with tab2:
             with st.form("signup_form", clear_on_submit=True):
@@ -973,10 +1007,14 @@ def auth_page():
                 signup_submitted = st.form_submit_button("Create Account", use_container_width=True)
                 
                 if signup_submitted:
-                    if not new_email or not new_pass:
-                        st.error("Explicit Warning: Fields cannot be empty.")
+                    if not _is_valid_email(new_email):
+                        st.error("Invalid email. Use a real address like name@example.com")
+                    elif not new_pass:
+                        st.error("Password cannot be empty.")
                     elif new_pass != confirm_pass:
-                        st.error("Explicit Warning: Password match error. Passwords do not match!")
+                        st.error("Passwords do not match.")
+                    elif not (pw_ok := _validate_password(new_pass))[0]:
+                        st.error(pw_ok[1])
                     else:
                         try:
                             existing = session.query(User).filter(User.email == new_email).first()

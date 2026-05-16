@@ -6,7 +6,7 @@ Streamlit UI.  It implements a small agentic team:
 
 - SupervisorAgent: routes the user request and coordinates other agents.
 - RAGAnswerAgent: answers questions with retrieval-augmented generation.
-- CodeEditorAgent: drafts/apply-safe edits to indexed vault snippets.
+- PatchDiffGenerator: generates unified diffs/patches for indexed vault snippets and can apply them on request.
 - CodeReviewerAgent: reviews code for quality, security, and performance.
 - TestStrategistAgent: suggests tests and validation plans.
 - DocumentationAgent: creates summaries, docs, and onboarding notes.
@@ -19,6 +19,7 @@ matching Hub.code_snippet in the local database.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import io
 import json
@@ -265,7 +266,7 @@ def _heuristic_edit(user_message: str, old_code: str) -> Optional[Tuple[str, str
     """Small deterministic editor used when the LLM is unavailable/rate-limited.
 
     This is intentionally conservative. It only applies obvious text-level edits
-    for common requests so the CodeEditorAgent can still produce a useful diff
+    for common requests so the PatchDiffGenerator can still produce a useful diff
     during provider outages.
     """
     text = user_message.lower()
@@ -425,6 +426,15 @@ def _build_indexed_repo_zip(backend: dict, repo_url: str) -> Tuple[Optional[byte
 # Agent implementations
 # ---------------------------------------------------------------------------
 
+def _is_valid_python(code: str) -> bool:
+    """Return True if code parses as valid Python. Non-Python content returns True (skip validation)."""
+    try:
+        ast.parse(code)
+        return True
+    except SyntaxError:
+        return False
+
+
 class BaseVaultAgent:
     name = "BaseAgent"
     description = "Base vault agent"
@@ -479,15 +489,95 @@ class RAGAnswerAgent(BaseVaultAgent):
         return AgentResult(answer=answer, steps=steps, tools_used=tools, active_agent=self.name)
 
 
-class CodeEditorAgent(BaseVaultAgent):
-    name = "CodeEditorAgent"
-    description = "Drafts diffs and can update indexed vault snippets on explicit request."
+class PatchDiffGenerator(BaseVaultAgent):
+    name = "PatchDiffGenerator"
+    description = "Generates unified diffs/patches for indexed vault snippets and can apply them to the local vault on request."
 
+    # ------------------------------------------------------------------
+    # Step 1 — File selector: LLM picks the most relevant result.
+    # ------------------------------------------------------------------
+    def _select_target(self, results: List[dict], user_message: str, backend: dict) -> dict:
+        file_list = "\n".join(f"[{i}] {r.get('name', 'unknown')}" for i, r in enumerate(results))
+        try:
+            raw = _call_llm(
+                backend,
+                [
+                    {
+                        "role": "system",
+                        "content": "Select the most relevant file to edit. Return ONLY the 0-based index number — nothing else.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"User request:\n{user_message}\n\nFiles:\n{file_list}",
+                    },
+                ],
+                model=FAST_MODEL,
+                temperature=0,
+                max_tokens=10,
+            )
+            idx = int(raw.strip())
+            if 0 <= idx < len(results):
+                return results[idx]
+        except Exception:
+            pass
+        return results[0]
+
+    # ------------------------------------------------------------------
+    # Step 2 — Plan: describe exactly what needs to change.
+    # ------------------------------------------------------------------
+    def _plan_edit(self, code: str, user_message: str, backend: dict) -> str:
+        return _call_llm(
+            backend,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a senior software engineer. "
+                        "Explain EXACTLY what needs to change in the code. Be precise and concise."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"User request:\n{user_message}\n\nCode:\n{code[:3000]}",
+                },
+            ],
+            temperature=0.1,
+            max_tokens=400,
+        )
+
+    # ------------------------------------------------------------------
+    # Step 3 — Apply: return ONLY the updated code, no fences.
+    # ------------------------------------------------------------------
+    def _apply_edit(self, code: str, plan: str, backend: dict) -> str:
+        return _call_llm(
+            backend,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are modifying code. Apply the requested changes, keep everything else "
+                        "unchanged, and return ONLY the updated code — no explanations, no markdown fences."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Plan:\n{plan}\n\nCode:\n{code}",
+                },
+            ],
+            temperature=0.05,
+            max_tokens=1800,
+        )
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
     def run(self, user_message: str, chat_history: List[dict], backend: dict) -> AgentResult:
         steps: List[dict] = []
-        tools = ["search_vault", "generate_patch"]
+        tools = ["search_vault", "select_target", "plan_edit", "apply_edit", "generate_patch"]
+
+        # 1. Search vault
         results = _run_search(backend, user_message, top_k=5)
-        steps.append({"type": "tool_call", "tool": "search_vault", "content": f"Located {len(results)} candidate snippet(s) for editing."})
+        steps.append({"type": "tool_call", "tool": "search_vault", "content": f"Located {len(results)} candidate snippet(s)."})
         if not results:
             return AgentResult(
                 answer="I could not find an indexed file/snippet to edit. Ingest the target repo/file first or mention the exact hub/file name.",
@@ -496,56 +586,48 @@ class CodeEditorAgent(BaseVaultAgent):
                 active_agent=self.name,
             )
 
-        target = results[0]
+        # 2. Select most relevant file
+        target = self._select_target(results, user_message, backend)
         target_name = str(target.get("name", "unknown"))
         old_code = str(target.get("snippet", ""))
-        context = _format_sources(results, max_chars=7000)
+        steps.append({"type": "tool_result", "tool": "select_target", "content": f"Selected: {target_name}"})
 
+        # 3. Plan the edit
+        notes: List[str] = []
         try:
-            raw = _call_llm(
-                backend,
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a careful code editing agent. Return ONLY JSON with keys: "
-                            "summary (string), edited_code (string), notes (array of strings). "
-                            "Preserve existing behavior unless the user asks for a change."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Edit request:\n{user_message}\n\nBest target: {target_name}\n\n"
-                            f"Relevant vault context:\n{context}\n\nReturn the full edited code for the best target."
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                max_tokens=1800,
-            )
-            parsed = _safe_json_loads(raw, {})
-            summary = parsed.get("summary") if isinstance(parsed, dict) else None
-            new_code = parsed.get("edited_code") if isinstance(parsed, dict) else None
-            notes = parsed.get("notes", []) if isinstance(parsed, dict) else []
-            if not new_code:
-                raise ValueError("The model did not return edited_code JSON.")
+            plan = self._plan_edit(old_code, user_message, backend)
         except Exception as exc:
-            steps.append({"type": "fallback", "content": f"Patch generation fallback: {exc}"})
+            steps.append({"type": "fallback", "content": f"Plan step failed: {exc}"})
+            plan = user_message  # use raw request as plan
+        steps.append({"type": "tool_result", "tool": "plan_edit", "content": f"Plan: {plan[:120]}..."})
+
+        # 4. Apply the edit
+        new_code = old_code
+        try:
+            new_code = self._apply_edit(old_code, plan, backend)
+            steps.append({"type": "tool_result", "tool": "apply_edit", "content": "Edits applied."})
+        except Exception as exc:
+            steps.append({"type": "fallback", "content": f"Apply step failed: {exc}"})
             heuristic = _heuristic_edit(user_message, old_code)
             if heuristic:
-                summary, new_code, notes = heuristic
+                plan, new_code, notes = heuristic
             else:
-                summary = "Could not generate an automatic patch because the LLM is unavailable."
-                new_code = old_code
                 notes = [
                     "Configure GROQ_API_KEY or an active Admin KeyPool key, then retry.",
                     "If you just added a key in the UI, refresh the page so the active session picks it up.",
                 ]
 
+        # 5. Validate (Python files only)
+        if new_code and new_code != old_code:
+            looks_like_python = any(kw in old_code[:500] for kw in ["def ", "class ", "import ", "from "])
+            if looks_like_python and not _is_valid_python(new_code):
+                notes.append("⚠️ Generated code failed Python AST validation — review before applying.")
+
+        # 6. Generate diff
         diff = _build_unified_diff(target_name, old_code, new_code) if new_code != old_code else ""
         steps.append({"type": "tool_result", "tool": "generate_patch", "content": f"Generated diff with {len(diff)} characters."})
 
+        # 7. Optionally apply to vault
         apply_note = ""
         if _wants_apply(user_message) and diff:
             tools.append("update_indexed_snippet")
@@ -555,7 +637,7 @@ class CodeEditorAgent(BaseVaultAgent):
         elif diff:
             apply_note = "\n\nI did not apply this automatically. Say **apply/save this edit** to update the indexed vault snippet."
 
-        answer = f"### {self.name}: proposed edit for `{target_name}`\n\n{summary or 'Proposed code edit.'}\n"
+        answer = f"### {self.name}: proposed edit for `{target_name}`\n\n**Plan:** {plan}\n"
         if notes:
             answer += "\nNotes:\n" + "\n".join(f"- {n}" for n in notes)
         if diff:
@@ -563,6 +645,7 @@ class CodeEditorAgent(BaseVaultAgent):
         else:
             answer += "\n\nNo code changes were generated."
         answer += apply_note
+
         return AgentResult(
             answer=answer,
             steps=steps,
@@ -756,7 +839,7 @@ class SupervisorAgent(BaseVaultAgent):
     def __init__(self) -> None:
         self.agents: Dict[str, BaseVaultAgent] = {
             "rag": RAGAnswerAgent(),
-            "edit": CodeEditorAgent(),
+            "edit": PatchDiffGenerator(),
             "review": CodeReviewerAgent(),
             "test": TestStrategistAgent(),
             "docs": DocumentationAgent(),

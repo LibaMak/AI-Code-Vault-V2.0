@@ -7,3 +7,5 @@ vault_v5.db-shm
 vault_v5.db-wal
 __pycache__/
 *.pyc
+# Trash folder (dev cleanup artifacts)
+trash/

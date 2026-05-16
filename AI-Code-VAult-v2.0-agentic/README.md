@@ -234,7 +234,7 @@ This version includes a multi-agent AI workspace in **Agentic AI Studio**:
 
 - **SupervisorAgent** routes each request to the best specialist.
 - **RAGAnswerAgent** answers codebase questions using retrieved vault context.
-- **CodeEditorAgent** proposes unified diffs for indexed snippets and can update the local vault copy when the user explicitly says `apply`, `save`, or `update vault`.
+- **PatchDiffGenerator** generates unified diffs/patches for indexed snippets and can apply them to the local vault copy when the user explicitly says `apply`, `save`, or `update vault`.
 - **CodeReviewerAgent** performs quality, security, and performance reviews.
 - **TestStrategistAgent** designs unit/integration tests and edge cases.
 - **DocumentationAgent** writes summaries, README-style docs, and onboarding notes.

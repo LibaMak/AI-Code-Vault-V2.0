@@ -31,7 +31,7 @@
     <section class="agent-cards">
       <div class="agent"><strong>Supervisor</strong><span>Routes every prompt to the right specialist.</span></div>
       <div class="agent"><strong>RAG Answer</strong><span>Answers using retrieved vault snippets and source names.</span></div>
-      <div class="agent"><strong>Code Editor</strong><span>Generates safe diffs and can update indexed snippets.</span></div>
+      <div class="agent"><strong>Patch Diff</strong><span>Generates unified diffs/patches and can apply them to indexed snippets.</span></div>
       <div class="agent"><strong>Reviewer</strong><span>Finds bugs, security issues, and performance risks.</span></div>
       <div class="agent"><strong>Test Strategist</strong><span>Creates test plans, edge cases, and sample tests.</span></div>
       <div class="agent"><strong>Docs Agent</strong><span>Writes summaries, README notes, and onboarding docs.</span></div>
@@ -40,7 +40,7 @@
       <div class="chat">
         <div class="message user"><b>You:</b><br>Edit the login code to improve the error message.</div>
         <div class="message assistant">
-          <span class="badge">Active specialist: CodeEditorAgent · Tools: search_vault, generate_patch</span>
+          <span class="badge">Active specialist: PatchDiffGenerator · Tools: search_vault, generate_patch</span>
           <h3>Proposed edit for <code>auth_page</code></h3>
           <p>Improves the login failure copy so users know whether to check credentials or create an account, without exposing sensitive authentication details.</p>
           <div class="diff"><span class="del">- st.error("Explicit Warning: Password match error or User not found!")</span>
@@ -54,7 +54,7 @@
         <h3>Agent trace</h3>
         <ul class="trace">
           <li><b>1.</b> Supervisor started routing.</li>
-          <li><b>2.</b> Routed to CodeEditorAgent: Matched editing/refactoring intent.</li>
+          <li><b>2.</b> Routed to PatchDiffGenerator: Matched editing/refactoring intent.</li>
           <li><b>3.</b> called <b>search_vault</b> — Located 5 candidate snippets.</li>
           <li><b>4.</b> <b>generate_patch</b> result — Generated diff with 231 characters.</li>
         </ul>
