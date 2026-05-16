@@ -1469,9 +1469,16 @@ def process_file_content(uploaded_file, user_id):
 
 def run_scan(repo_url):
     """Trigger the background scan thread"""
-    if st.session_state.is_scanning:
-        st.warning("A scan is already in progress.")
-        return
+    if st.session_state.get('is_scanning'):
+        # Check DB failsafe in case session state got stuck
+        engine = get_engine()
+        with Session(engine) as scan_session:
+            db_user = scan_session.query(User).filter(User.id == st.session_state.user['id']).first()
+            if db_user and db_user.scan_status and any(k in str(db_user.scan_status).lower() for k in ["cloning", "parsing", "indexing", "scanning", "preparing"]):
+                st.warning("A scan is already in progress.")
+                return
+            else:
+                st.session_state.is_scanning = False
         
     user_id = st.session_state.user['id']
     # Immediately set DB status so UI picks it up
@@ -1741,6 +1748,7 @@ if menu == "Ingest":
             db_current_user.scan_status = ""
             db_current_user.scan_progress = 0
             session.commit()
+            st.session_state.is_scanning = False
             st.rerun()
     # Initialize live variables for UI display
     live_status = db_current_user.scan_status if db_current_user else ""
@@ -1771,6 +1779,7 @@ if menu == "Ingest":
                 _u.scan_status = ""
                 _u.scan_progress = 0
                 session.commit()
+            st.session_state.is_scanning = False
             import time as _time
             _time.sleep(1) # Brief pause so they can read the toast
             st.rerun()
