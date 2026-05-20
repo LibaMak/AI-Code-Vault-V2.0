@@ -272,3 +272,68 @@ This repository is configured for public deployment on Streamlit Community Cloud
 - Full deployment instructions: `DEPLOYMENT.md`
 
 Set `GROQ_API_KEY` in Streamlit Cloud secrets before deploying.
+
+---
+
+## 🏛️ System Architecture
+
+```mermaid
+graph TD
+    %% Frontend / UI
+    UI[Streamlit Cyber Frontend] -->|Auth & Session| CookieMgr[Cookie Manager]
+    UI -->|Navigate Tabs| Router[Menu Router]
+
+    %% Middleware / Orchestrator
+    Router -->|Query / Chat| Supervisor[Supervisor Agent]
+    Supervisor -->|Routes to| Specialists[Specialist Agents: RAG, Review, Edit, Quiz, Extract, Analysis, Doc, Test]
+    Specialists -->|Retrieves context| HybridSearch[Hybrid Search: LIKE Query + Cosine Similarity Reranking]
+    
+    %% Ingestion Pipeline
+    Router -->|Repository Path| Scanner[AST Repository Scanner]
+    Router -->|Upload File| FileProc[File Processor: PDF, CSV, Docs]
+    Scanner -->|Embeddings| SentenceTransformer[sentence-transformers: all-MiniLM-L6-v2]
+    FileProc -->|Embeddings| SentenceTransformer
+    
+    %% Database Layer (Data Vault 2.0)
+    SentenceTransformer -->|Load DV2.0| DB[(SQLite: Data Vault 2.0 Schema)]
+    HybridSearch -->|Query DV2.0| DB
+    
+    %% DV2.0 Tables Detail
+    subgraph Data Vault 2.0 Database
+        HubUser[HubUser] --- LinkUserDoc[LinkUserDocument]
+        HubDoc[HubDocument] --- LinkUserDoc
+        HubDoc --- SatDocContent[SatDocumentContent]
+        HubDoc --- SatDocEmb[SatDocumentEmbedding]
+        HubUser --- SatUserProfile[SatUserProfile]
+        HubUser --- SatUserAuth[SatUserAuthentication]
+    end
+```
+
+## 🎯 Evaluator's Checklist & Verification Guide
+
+This section is designed to walk an evaluator through verifying all features and architectural requirements of AI Code Vault 2.0.
+
+### 🔑 Phase 1: Authentication & Provisioning
+1. **Automatic Provisioning**: Ensure you have defined `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your `.env`. On start, the app will automatically seed this admin account in the database.
+2. **Rate Limiting**: Attempt to login with incorrect credentials more than 5 times. The system will block further attempts for 15 minutes, displaying an authorization error.
+3. **Session Cookies**: Close the browser tab and reopen it; your active session will be securely restored from cookies.
+
+### 📂 Phase 2: Ingestion & Data Vault 2.0 Isolation
+1. **Repository / File Ingestion**: Ingest a test file (e.g., Python code or CSV). View the custom cyberpunk progress indicator updating chunk progress in real-time.
+2. **Soft Delete Verification**: Go to **Analytics** -> **File Manager** and soft delete the file. The database row will mark the load end date as active, soft-deleting the document content.
+3. **Multi-Tenant Scoping**: Log in as a regular user, upload a document, and verify that another registered user cannot view, search, or query it (strict Row-Level Security isolation).
+
+### 🤖 Phase 3: Specialist Agent Matrix
+1. **Quiz Agent**: Start a chat with `"Give me a 3-question quiz on my code structure"`.
+2. **Extract Agent**: Input `"Extract all API endpoints/function signatures from the vault"`.
+3. **Analysis Agent**: Ask `"Perform a deep architectural vulnerability analysis on the database connection"`.
+4. **Edit Agent**: Prompt `"Modify streamlit_app.py to add a new sidebar feature"`. Download the generated `.patch` file.
+
+### ⚙️ Phase 4: Theme Preferences & User Profile
+1. **Change Password**: Go to the **User Profile** tab (available in the sidebar) and change the password. Log out and log back in to verify the update.
+2. **Theme Selection**: Switch your theme preference between **Dark**, **Light**, and **System** mode inside the Profile tab. Your choice is persistently saved to your `SatUserProfile` in the database.
+
+### 📊 Phase 5: Admin Performance Command Center
+1. **Cost Audit**: Navigate to **Admin Dashboard** -> **Metrics & Runners**. Check the calculated token cost metrics based on input/output tokens.
+2. **Accuracy Test Runner**: Enter a verification query under **Accuracy Test Runner** and click run. Verify the cosine similarity scores for top matches.
+3. **Scale Test Runner**: Run the stress simulation slider to mock multiple concurrent searches. Observe the latency distribution curve and peak load performance.

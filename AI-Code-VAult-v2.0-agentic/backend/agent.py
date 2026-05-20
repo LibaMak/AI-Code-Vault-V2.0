@@ -42,7 +42,7 @@ from embeddings import get_embeddings
 from db_connector import get_engine, Hub, ScanJob
 
 # Load .env from project root so GROQ_API_KEY is available when running Streamlit.
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"), override=True)
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 FAST_MODEL = os.getenv("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
@@ -172,6 +172,21 @@ def _run_search(backend: dict, query: str, top_k: int = 5) -> List[dict]:
     search_fn = backend.get("run_hybrid_search") or backend.get("search_vault")
     if not callable(search_fn):
         return []
+    
+    # Try calling as database connector function: run_hybrid_search(session, query, user_id, top_k=5)
+    get_engine = backend.get("get_engine")
+    user_id = backend.get("current_user_id")
+    if get_engine and user_id is not None:
+        try:
+            with Session(get_engine()) as session:
+                # Import here to avoid any issues
+                import db_connector
+                results = db_connector.run_hybrid_search(session, query, user_id, top_k=top_k)
+                return _normalize_search_results(results, top_k)
+        except Exception as e:
+            # Fallback to single parameter call
+            pass
+
     try:
         results = search_fn(query, top_k=top_k)
     except TypeError:
@@ -179,6 +194,10 @@ def _run_search(backend: dict, query: str, top_k: int = 5) -> List[dict]:
     except Exception as exc:
         return [{"name": "search_error", "snippet": str(exc), "score": 0}]
 
+    return _normalize_search_results(results, top_k)
+
+
+def _normalize_search_results(results: List[Any], top_k: int) -> List[dict]:
     normalized: List[dict] = []
     for item in results or []:
         if isinstance(item, dict):
@@ -455,7 +474,7 @@ class RAGAnswerAgent(BaseVaultAgent):
 
         if not results:
             return AgentResult(
-                answer="I could not find relevant indexed vault context. Ingest a repository/file first, or ask a more specific question.",
+                answer="No relevant content found in your vault for this query",
                 steps=steps,
                 tools_used=tools,
                 active_agent=self.name,
@@ -470,7 +489,7 @@ class RAGAnswerAgent(BaseVaultAgent):
                         "role": "system",
                         "content": (
                             "You are a precise RAG engineering assistant. Answer only from the provided vault context. "
-                            "If evidence is missing, say what is missing. Cite source names inline."
+                            "If evidence is missing, say what is missing. You MUST explicitly cite the source filename and approximate location for every claim you make inline."
                         ),
                     },
                     {"role": "user", "content": f"Question:\n{user_message}\n\nVault context:\n{context}"},
@@ -484,9 +503,210 @@ class RAGAnswerAgent(BaseVaultAgent):
                 + "\n\n".join(f"- **{r['name']}** (score {r['score']}): {r['snippet'][:500]}" for r in results[:3])
             )
 
-        if "source" not in answer.lower():
-            answer += f"\n\nSources: {_source_list(results)}"
+        sources_list = [r.get("name") for r in results if r.get("name") and r.get("name") != "unknown"]
+        unique_sources = list(dict.fromkeys(sources_list))
+        if unique_sources:
+            footer = "\n\n### Sources Referenced:\n" + "\n".join(f"- {s}" for s in unique_sources)
+        else:
+            footer = "\n\n### Sources Referenced:\n- vault context"
+            
+        if "Sources Referenced" not in answer:
+            answer += footer
+
         return AgentResult(answer=answer, steps=steps, tools_used=tools, active_agent=self.name)
+
+
+class QuizAgent(BaseVaultAgent):
+    name = "QuizAgent"
+    description = "Generates a 5-question quiz from vault context."
+
+    def run(self, user_message: str, chat_history: List[dict], backend: dict) -> AgentResult:
+        results = _run_search(backend, user_message, top_k=6)
+        if not results:
+            return AgentResult(
+                answer="No vault content found to generate a quiz. Please ingest a repository or document first.",
+                steps=[],
+                tools_used=["search_vault", "generate_quiz"],
+                active_agent=self.name,
+            )
+        
+        context = _format_sources(results)
+        steps = [
+            {"type": "tool_call", "tool": "search_vault", "content": f"Retrieved {len(results)} chunks for quiz context."},
+            {"type": "tool_result", "tool": "format_sources", "content": f"Formatted context ({len(context)} chars)."}
+        ]
+        
+        try:
+            raw = _call_llm(
+                backend,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a quiz generator. Based ONLY on the provided vault context, "
+                            "generate exactly 5 questions: 3 multiple choice (4 options each) and "
+                            "2 True/False. Return ONLY a JSON array. Each object must have these "
+                            "exact keys: question (string), type (either 'mcq' or 'tf'), options "
+                            "(list of strings, 4 for mcq, ['True','False'] for tf), correct_index "
+                            "(integer 0-3), explanation (string). No other text outside the JSON."
+                        )
+                    },
+                    {"role": "user", "content": f"Topic/Query: {user_message}\n\nVault Context:\n{context}"}
+                ],
+                max_tokens=1500
+            )
+            
+            # Post-process JSON
+            json_str = raw.strip()
+            fence_match = re.search(r"```(?:json)?\s*(.*?)```", json_str, re.DOTALL | re.IGNORECASE)
+            if fence_match:
+                json_str = fence_match.group(1).strip()
+            
+            try:
+                parsed = json.loads(json_str)
+                if not isinstance(parsed, list):
+                    raise ValueError("JSON is not a list")
+                
+                md_lines = []
+                letters = ["A", "B", "C", "D"]
+                for i, q in enumerate(parsed, 1):
+                    qtype = q.get("type", "mcq")
+                    question_text = q.get("question", "No question text")
+                    options = q.get("options", [])
+                    correct_idx = q.get("correct_index", 0)
+                    explanation = q.get("explanation", "")
+                    
+                    md_lines.append(f"**Question {i}:** {question_text}")
+                    if qtype == "mcq":
+                        opts_str = "  ".join(f"{letters[j]}) {opt}" for j, opt in enumerate(options[:4]))
+                        md_lines.append(opts_str)
+                        correct_opt = options[correct_idx] if correct_idx < len(options) else "Unknown"
+                        md_lines.append(f"✓ Correct: {correct_opt}")
+                    else:  # True/False
+                        correct_opt = options[correct_idx] if correct_idx < len(options) else "True"
+                        md_lines.append(f"✓ {correct_opt}")
+                    
+                    md_lines.append(f"*{explanation}*")
+                    md_lines.append("")
+                
+                answer = "\n".join(md_lines)
+            except Exception:
+                answer = f"Quiz generation (raw format):\n\n{raw}"
+                
+        except Exception as e:
+            answer = f"Quiz generation (raw format):\n\nFailed to call LLM: {e}"
+            
+        return AgentResult(
+            answer=answer,
+            steps=steps,
+            tools_used=["search_vault", "generate_quiz"],
+            active_agent=self.name
+        )
+
+
+class ExtractAgent(BaseVaultAgent):
+    name = "ExtractAgent"
+    description = "Extracts tables or key points from vault context."
+
+    def run(self, user_message: str, chat_history: List[dict], backend: dict) -> AgentResult:
+        results = _run_search(backend, user_message, top_k=6)
+        if not results:
+            return AgentResult(
+                answer="No vault content found to extract from. Please ingest content first.",
+                steps=[],
+                tools_used=["search_vault", "extract_content"],
+                active_agent=self.name,
+            )
+        
+        context = _format_sources(results)
+        steps = [
+            {"type": "tool_call", "tool": "search_vault", "content": f"Retrieved {len(results)} chunks for extraction."},
+            {"type": "tool_result", "tool": "format_sources", "content": f"Formatted context ({len(context)} chars)."}
+        ]
+        
+        try:
+            answer = _call_llm(
+                backend,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a content extractor. Analyze the provided vault context. "
+                            "If the content contains naturally tabular data (parameters, configs, "
+                            "comparisons, lists of items with attributes) return a single Markdown "
+                            "table. Otherwise return structured bullet points with a one-line bold "
+                            "header. Choose ONE format only — never both in the same response. "
+                            "Maximum 20 rows for tables, 15 bullets for lists. Be concise."
+                        )
+                    },
+                    {"role": "user", "content": f"Extract Request: {user_message}\n\nVault Context:\n{context}"}
+                ],
+                max_tokens=1000
+            )
+        except Exception:
+            answer = "Extraction unavailable. Sources: " + _source_list(results)
+            
+        return AgentResult(
+            answer=answer,
+            steps=steps,
+            tools_used=["search_vault", "extract_content"],
+            active_agent=self.name
+        )
+
+
+class AnalysisAgent(BaseVaultAgent):
+    name = "AnalysisAgent"
+    description = "Performs architectural analysis and pattern identification."
+
+    def run(self, user_message: str, chat_history: List[dict], backend: dict) -> AgentResult:
+        results = _run_search(backend, user_message, top_k=8)
+        if not results:
+            return AgentResult(
+                answer="No vault content found for analysis. Please ingest a repository first.",
+                steps=[],
+                tools_used=["search_vault", "analyze_architecture"],
+                active_agent=self.name,
+            )
+        
+        context = _format_sources(results)
+        steps = [
+            {"type": "tool_call", "tool": "search_vault", "content": f"Retrieved {len(results)} chunks for analysis."},
+            {"type": "tool_result", "tool": "format_sources", "content": f"Formatted context ({len(context)} chars)."}
+        ]
+        
+        try:
+            answer = _call_llm(
+                backend,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an architectural analyst. Analyze the provided codebase "
+                            "context at the SYSTEM and DESIGN level — not line-level bugs. "
+                            "Your response must have exactly three sections with these headers:\n"
+                            "## Patterns Found\n"
+                            "List design patterns present in the code with evidence.\n"
+                            "## Anti-Patterns & Weaknesses\n"
+                            "List architectural weaknesses with specific file/function references "
+                            "from the vault context.\n"
+                            "## Recommendations\n"
+                            "Give exactly 3-5 actionable recommendations. Label each with priority: "
+                            "🔴 High, 🟡 Medium, or 🟢 Low. Reference actual filenames from context."
+                        )
+                    },
+                    {"role": "user", "content": f"Analysis Request: {user_message}\n\nVault Context:\n{context}"}
+                ],
+                max_tokens=2000
+            )
+        except Exception:
+            answer = "Analysis unavailable. Sources: " + _source_list(results)
+            
+        return AgentResult(
+            answer=answer,
+            steps=steps,
+            tools_used=["search_vault", "analyze_architecture"],
+            active_agent=self.name
+        )
 
 
 class PatchDiffGenerator(BaseVaultAgent):
@@ -844,26 +1064,37 @@ class SupervisorAgent(BaseVaultAgent):
             "test": TestStrategistAgent(),
             "docs": DocumentationAgent(),
             "zip": ZipExportAgent(),
+            "quiz": QuizAgent(),
+            "extract": ExtractAgent(),
+            "analyze": AnalysisAgent(),
             "general": GeneralChatAgent(),
         }
 
     def route(self, user_message: str, chat_history: List[dict], backend: dict) -> Tuple[str, str]:
         text = user_message.lower()
 
-        # Deterministic fast route first.
-        if any(k in text for k in ["zip", "archive", "downloadable", "backup", "export bundle"]):
-            return "zip", "Matched archive/export intent."
-        if any(k in text for k in ["edit", "change", "modify", "patch", "fix this", "refactor", "apply", "update the code"]):
-            return "edit", "Matched editing/refactoring intent."
-        if any(k in text for k in ["test", "pytest", "unit test", "integration test", "edge case"]):
+        # Deterministic routing based on exact priority order requested in Section 3
+        # CodeReviewerAgent: handles review, security, vulnerability, bug, improve, recommend, what's wrong (line-level)
+        # AnalysisAgent: handles analyze, best practice (architectural analysis)
+        if any(k in text for k in ["patch", "edit", "fix", "modify", "refactor"]):
+            return "edit", "Matched editing intent."
+        if any(k in text for k in ["test", "pytest", "unit test", "edge case"]):
             return "test", "Matched testing intent."
-        if any(k in text for k in ["review", "security", "vulnerability", "performance", "bug", "best practice", "optimize"]):
-            return "review", "Matched review/security/performance intent."
-        if any(k in text for k in ["document", "docs", "readme", "summary", "summarize", "onboarding", "explain architecture"]):
-            return "docs", "Matched documentation/summary intent."
-        if any(k in text for k in ["vault", "repo", "repository", "code", "file", "function", "class", "where is", "how does"]):
-            return "rag", "Matched vault/code question intent."
-        if len(text.split()) <= 3 and any(k in text for k in ["hi", "hello", "hey", "thanks"]):
+        if any(k in text for k in ["review", "security", "vulnerability", "bug", "improve", "recommend", "what's wrong"]):
+            return "review", "Matched line-level review/security intent."
+        if any(k in text for k in ["document", "docs", "readme"]):
+            return "docs", "Matched documentation intent."
+        if "summarize" in text:
+            return "docs", "Matched summarize intent."
+        if any(k in text for k in ["quiz", "test me", "questions about", "quiz me", "give me a quiz", "challenge me"]):
+            return "quiz", "Matched quiz generation intent."
+        if any(k in text for k in ["extract", "key points", "table of", "list all", "show all functions", "show all classes"]):
+            return "extract", "Matched extraction intent."
+        if any(k in text for k in ["analyze", "architectural", "best practice", "design pattern", "anti-pattern", "system design"]):
+            return "analyze", "Matched architectural analysis intent."
+        if any(k in text for k in ["zip", "export", "archive", "backup"]):
+            return "zip", "Matched export intent."
+        if len(text.split()) <= 3 and any(k in text for k in ["hi", "hello", "thanks"]):
             return "general", "Matched general chat intent."
 
         # Optional LLM router for ambiguous requests.
@@ -874,7 +1105,18 @@ class SupervisorAgent(BaseVaultAgent):
                     {
                         "role": "system",
                         "content": (
-                            "Route the user to exactly one agent: rag, edit, review, test, docs, zip, general. "
+                            "Route the user to exactly one agent: rag, edit, review, test, docs, zip, quiz, extract, analyze, general.\n"
+                            "Descriptions:\n"
+                            "- rag: general vault questions\n"
+                            "- edit: proposes code patches\n"
+                            "- review: line-level security/bugs\n"
+                            "- test: generates unit tests\n"
+                            "- docs: summaries and documentation\n"
+                            "- zip: exports codebase as zip\n"
+                            "- quiz: generates quiz questions from vault content\n"
+                            "- extract: extracts tables or key points from vault content\n"
+                            "- analyze: architectural analysis and design pattern identification\n"
+                            "- general: greetings and non-code chat\n"
                             "Return JSON: {\"agent\": \"...\", \"reason\": \"...\"}."
                         ),
                     },
@@ -882,7 +1124,7 @@ class SupervisorAgent(BaseVaultAgent):
                 ],
                 model=FAST_MODEL,
                 temperature=0,
-                max_tokens=120,
+                max_tokens=150,
             )
             parsed = _safe_json_loads(raw, {})
             agent = parsed.get("agent", "rag")
@@ -894,6 +1136,25 @@ class SupervisorAgent(BaseVaultAgent):
 
     def run(self, user_message: str, chat_history: List[dict], backend: dict) -> AgentResult:
         steps = [{"type": "supervisor", "content": "Supervisor started routing."}]
+        
+        # Immediate disambiguation check to ask for the path if multiple matches exist
+        get_engine = backend.get("get_engine")
+        user_id = backend.get("current_user_id")
+        if get_engine and user_id is not None:
+            try:
+                with Session(get_engine()) as session:
+                    import db_connector
+                    results = db_connector.run_hybrid_search(session, user_message, user_id, top_k=1)
+                    if results and results[0].get("name") == "disambiguation_required":
+                        return AgentResult(
+                            answer=results[0]["snippet"],
+                            steps=[{"type": "disambiguation", "content": "Multiple matches found; requesting path clarification."}],
+                            tools_used=["search_vault"],
+                            active_agent=self.name,
+                        )
+            except Exception:
+                pass
+                
         route_key, reason = self.route(user_message, chat_history, backend)
         steps.append({"type": "supervisor", "content": f"Routed to {self.agents[route_key].name}: {reason}"})
         result = self.agents[route_key].run(user_message, chat_history, backend)

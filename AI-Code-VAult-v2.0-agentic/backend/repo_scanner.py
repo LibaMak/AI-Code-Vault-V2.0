@@ -125,7 +125,7 @@ def _clone_github_repo(repo_url: str, timeout: int = 60) -> str:
             pass
         raise Exception(f"Failed to obtain repo via git or ZIP: {e}")
 
-def get_repo_chunks(repo_path: str, max_chunk_size: int = 2000) -> List[Dict[str, Any]]:
+def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str, Any]]:
     """
     Scan a repository and create code chunks for indexing.
     
@@ -158,7 +158,7 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 2000) -> List[Dict[str
         # Walk and collect chunks
         for root, dirs, files in os.walk(scan_path):
             # Skip hidden directories and common exclusions
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', '__pycache__', 'venv', '.git']]
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', 'venv', '.venv', 'dist', 'build']]
             
             for file in files:
                 file_path = os.path.join(root, file)
