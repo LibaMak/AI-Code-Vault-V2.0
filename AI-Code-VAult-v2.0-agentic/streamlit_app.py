@@ -1827,7 +1827,10 @@ def render_profile_tab():
         total_size_bytes = session.query(sa.func.sum(Document.size)).filter(Document.user_id == user_id, Document.status != 'deleted').scalar() or 0
         total_size_mb = total_size_bytes / (1024 * 1024)
         
-        num_snippets = session.query(Hub).filter(Hub.user_id == user_id).count()
+        num_snippets = session.query(Hub).filter(
+            Hub.user_id == user_id,
+            sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
+        ).count()
         num_scan_jobs = session.query(ScanJob).filter(ScanJob.user_id == user_id).count()
         num_searches = session.query(Search).filter(Search.user_id == user_id).count()
     except Exception as e:
@@ -2139,9 +2142,11 @@ def render_explorer_tab():
     tab_hubs, tab_files = st.tabs(["Code Hubs", "Document Index"])
     
     with tab_hubs:
-        # Query all hubs for current user
+        # Query all hubs for current user, ignoring soft-deleted repositories/files
         user_id = st.session_state.user['id']
-        hubs = get_user_scoped_query(session, Hub, user_id).all()
+        hubs = get_user_scoped_query(session, Hub, user_id).filter(
+            sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
+        ).all()
         
         if hubs:
             df_hubs = pd.DataFrame([{
@@ -2156,7 +2161,11 @@ def render_explorer_tab():
             
             sel_hub = st.selectbox("Select a Hub to analyze logical metrics:", df_hubs['Logical Name'].unique())
             if sel_hub:
-                hub_obj = session.query(Hub).filter(Hub.hash_key == sel_hub, Hub.user_id == user_id).first()
+                hub_obj = session.query(Hub).filter(
+                    Hub.hash_key == sel_hub, 
+                    Hub.user_id == user_id,
+                    sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
+                ).first()
                 sat_obj = session.query(Satellite).filter(Satellite.hub_hash == sel_hub).first()
                 
                 if hub_obj:
@@ -2170,7 +2179,10 @@ def render_explorer_tab():
             st.info("💡 Pro Tip: Use descriptive repository URLs for better high-level architectural summaries.")
 
     with tab_files:
-        files = get_user_scoped_query(session, FileMetadata, st.session_state.user['id']).all()
+        files = session.query(Document).filter(
+            Document.user_id == st.session_state.user['id'],
+            sa.or_(Document.status != 'deleted', Document.status.is_(None))
+        ).all()
         if files:
             df_files = pd.DataFrame([{
                 "Filename": f.filename,
@@ -2397,7 +2409,7 @@ def render_analytics_tab():
                             SatDocumentContent.hub_doc_hash == HubDocument.hash_key,
                             HubDocument.natural_key == doc.filename,
                             LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
-                            LinkUserDocument.hub_user_hash == compute_hash_key(user_id),
+                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
                             SatDocumentContent.chunk_index == 0,
                             SatDocumentContent.load_end_date.is_(None)
                         ).first()
@@ -2407,15 +2419,40 @@ def render_analytics_tab():
                             st.info("No content available for preview.")
                             
                     if col_btn2.button("Delete (DV2.0 Soft Delete)", key=f"del_{doc.id}", type="primary"):
+                        # Soft delete all document chunks in Data Vault 2.0
                         chunks = session.query(SatDocumentContent).filter(
                             SatDocumentContent.hub_doc_hash == HubDocument.hash_key,
                             HubDocument.natural_key == doc.filename,
                             LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
-                            LinkUserDocument.hub_user_hash == compute_hash_key(user_id),
+                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
                             SatDocumentContent.load_end_date.is_(None)
                         ).all()
                         for chunk in chunks:
                             chunk.load_end_date = datetime.now()
+                            
+                        # Soft delete matching embeddings
+                        embeds = session.query(SatDocumentEmbedding).filter(
+                            SatDocumentEmbedding.hub_doc_hash == HubDocument.hash_key,
+                            HubDocument.natural_key == doc.filename,
+                            LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
+                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
+                            SatDocumentEmbedding.load_end_date.is_(None)
+                        ).all()
+                        for embed in embeds:
+                            embed.load_end_date = datetime.now()
+
+                        # Soft delete dual-written Hub code chunks
+                        session.query(Hub).filter(
+                            Hub.user_id == user_id,
+                            Hub.repo_url == f"file_upload/{doc.filename}"
+                        ).update({Hub.status: 'deleted'}, synchronize_session=False)
+
+                        # Delete from FileMetadata if any entries exist
+                        session.query(FileMetadata).filter(
+                            FileMetadata.user_id == user_id,
+                            FileMetadata.filename == doc.filename
+                        ).delete()
+                        
                         doc.status = 'deleted'
                         session.commit()
                         st.success(f"{doc.filename} successfully deleted.")
@@ -2607,7 +2644,9 @@ def render_admin_dashboard_tab():
     
     col1, col2, col3 = st.columns(3)
     total_users = session.query(User).count()
-    global_hubs = session.query(Hub).count()
+    global_hubs = session.query(Hub).filter(
+        sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
+    ).count()
     
     db_url_str = str(engine_v4.url)
     perf_metrics = get_cached_performance_metrics(db_url_str)
