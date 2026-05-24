@@ -617,15 +617,16 @@ def run_hybrid_search(session, query, user_id, top_k=5):
     # E.g. "backend/agent.py" or "ai-legal-aid-pakistan | prompts.py"
     for f in all_files_sorted:
         normalized_f = f.lower().replace("\\", "/").replace(" ", "")
-        clean_f = normalized_f.split("::chunk_")[0]
+        clean_f = normalized_f.split("::")[0]
         if clean_f in normalized_query:
             matched_files.append(f)
             
     # Build map of basename -> list of full paths/filenames
     basename_map = {}
     for f in all_files:
-        f_norm = f.replace("\\", "/").split("::chunk_")[0]
-        base = f_norm.split("/")[-1]
+        f_norm = f.replace("\\", "/").lower()
+        clean_file_path = f_norm.split("::")[0]
+        base = clean_file_path.split("/")[-1]
         if base:
             basename_map.setdefault(base.lower(), []).append(f)
             
@@ -637,7 +638,7 @@ def run_hybrid_search(session, query, user_id, top_k=5):
             pattern = r'\b' + re.escape(base_lower) + r'\b'
             if re.search(pattern, query_lower):
                 # Disambiguate only if different files are matched (ignoring chunk indexes)
-                unique_base_files = list({fp.split("::chunk_")[0] for fp in full_paths})
+                unique_base_files = list({fp.split("::")[0] for fp in full_paths})
                 if len(unique_base_files) > 1:
                     # Multiple distinct files match the filename alone!
                     paths_str = " or ".join(f"'{p}'" for p in unique_base_files)
@@ -658,7 +659,8 @@ def run_hybrid_search(session, query, user_id, top_k=5):
         matched_dirs = []
         for f in all_files:
             f_norm = f.replace("\\", "/").lower()
-            parts = f_norm.split("/")
+            clean_file_path = f_norm.split("::")[0]
+            parts = clean_file_path.split("/")
             if len(parts) > 1:
                 # Check directory prefixes (e.g. "backend", "ai-legal-aid-pakistan")
                 for i in range(1, len(parts)):
@@ -669,8 +671,9 @@ def run_hybrid_search(session, query, user_id, top_k=5):
         if matched_dirs:
             for f in all_files:
                 f_norm = f.replace("\\", "/").lower()
+                clean_file_path = f_norm.split("::")[0]
                 for d in matched_dirs:
-                    if f_norm.startswith(d + "/"):
+                    if clean_file_path.startswith(d + "/"):
                         matched_files.append(f)
                         
     if disambiguation_result:

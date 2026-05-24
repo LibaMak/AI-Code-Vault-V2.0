@@ -263,9 +263,13 @@ def _update_indexed_snippet(backend: dict, hub_name: str, new_code: str) -> Tupl
     get_engine = backend.get("get_engine")
     if not Hub or not get_engine:
         return False, "Database backend is unavailable."
+        
+    # Strip repository name prefix if present
+    clean_hub_name = hub_name.split(" | ", 1)[1] if " | " in hub_name else hub_name
+    
     try:
         with Session(get_engine()) as s:
-            query = s.query(Hub).filter(Hub.hash_key == hub_name)
+            query = s.query(Hub).filter(Hub.hash_key == clean_hub_name)
             current_user_id = backend.get("current_user_id")
             if current_user_id is not None and hasattr(Hub, "user_id"):
                 query = query.filter(Hub.user_id == current_user_id)

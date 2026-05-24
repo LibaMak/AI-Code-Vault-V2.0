@@ -44,13 +44,16 @@ def _estimate_complexity_from_ast(node: ast.AST) -> str:
 
 def parse_python_code(code_text: str, file_path: str, chunk_id: int = None) -> Dict[str, Any]:
     """Parse Python code using AST to extract deterministic metadata."""
+    file_key = file_path if file_path else 'python_chunk'
     try:
         tree = ast.parse(code_text)
     except Exception:
         # parsing failure — return generic chunk
-        hash_key = os.path.basename(file_path) if file_path else 'python_chunk'
+        logical_name = os.path.basename(file_path) if file_path else 'python_chunk'
         if chunk_id is not None:
-            hash_key = f"{hash_key}::chunk_{chunk_id}"
+            hash_key = f"{file_key}::{logical_name}::chunk_{chunk_id}"
+        else:
+            hash_key = f"{file_key}::{logical_name}"
         return {
             'hub': {
                 'hash_key': hash_key,
@@ -76,20 +79,22 @@ def parse_python_code(code_text: str, file_path: str, chunk_id: int = None) -> D
     if len(funcs) == 1 and not classes:
         primary = funcs[0]
         hub_type = 'function'
-        hash_key = primary.name
+        logical_name = primary.name
         params = [a.arg for a in primary.args.args]
     elif len(classes) == 1 and not funcs:
         primary = classes[0]
         hub_type = 'class'
-        hash_key = primary.name
+        logical_name = primary.name
         params = []
     else:
         hub_type = 'module'
-        hash_key = os.path.basename(file_path) if file_path else 'module'
+        logical_name = os.path.basename(file_path) if file_path else 'module'
         params = []
 
     if chunk_id is not None:
-        hash_key = f"{hash_key}::chunk_{chunk_id}"
+        hash_key = f"{file_key}::{logical_name}::chunk_{chunk_id}"
+    else:
+        hash_key = f"{file_key}::{logical_name}"
 
     # Find simple call references (function names) as links
     calls = []
@@ -126,17 +131,21 @@ def fallback_parse(chunk: Dict[str, Any]) -> Dict[str, Any]:
     code_text = chunk.get('code', '')
     embedding = generate_embedding(code_text)
     
-    hash_key = chunk.get('name', 'unknown_entity')
+    file_path = chunk.get('file_path', 'unknown')
+    logical_name = chunk.get('name', 'unknown_entity')
     chunk_id = chunk.get('chunk_id')
+    
     if chunk_id is not None:
-        hash_key = f"{hash_key}::chunk_{chunk_id}"
+        hash_key = f"{file_path}::{logical_name}::chunk_{chunk_id}"
+    else:
+        hash_key = f"{file_path}::{logical_name}"
 
     return {
         'hub': {
             'hash_key': hash_key,
             'type': chunk.get('type', 'chunk'),
             'code_snippet': code_text,
-            'file_path': chunk.get('file_path', 'unknown'),
+            'file_path': file_path,
             'embedding': embedding
         },
         'links': [],
@@ -206,9 +215,12 @@ Output ONLY valid JSON with keys: hub, links, satellite.
         parsed['hub']['file_path'] = file_path
         parsed['hub']['embedding'] = generate_embedding(code_text)
         
-        # Append chunk_id to LLM-generated hash_key to prevent overwriting
+        # Prepend file_path and append chunk_id to LLM-generated hash_key to prevent overwriting and allow search lookup
+        logical_name = parsed['hub'].get('hash_key', 'chunk')
         if chunk_id is not None:
-            parsed['hub']['hash_key'] = f"{parsed['hub'].get('hash_key', 'chunk')}::chunk_{chunk_id}"
+            parsed['hub']['hash_key'] = f"{file_path}::{logical_name}::chunk_{chunk_id}"
+        else:
+            parsed['hub']['hash_key'] = f"{file_path}::{logical_name}"
             
         return parsed
     except Exception:
