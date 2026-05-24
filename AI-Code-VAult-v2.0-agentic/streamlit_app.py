@@ -1013,52 +1013,7 @@ def _validate_password(password: str):
 
 # --- Login / Signup UI ---
 def auth_page():
-    # Subtle Outline 'Return to Homepage' Button
-    # Premium 'Return to Homepage' Button
-    st.markdown("""
-        <style>
-        .premium-back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: linear-gradient(90deg, var(--vault-panel-border), transparent);
-            color: var(--vault-accent);
-            text-decoration: none;
-            font-family: 'Inter', sans-serif;
-            font-size: 0.95rem;
-            font-weight: 600;
-            padding: 8px 18px;
-            border: 1px solid var(--vault-panel-border);
-            border-radius: 8px;
-            transition: all 0.3s ease;
-            box-shadow: var(--vault-shadow);
-        }
-        .premium-back-btn:hover {
-            background: var(--vault-accent);
-            border: 1px solid var(--vault-accent);
-            box-shadow: var(--vault-shadow);
-            transform: translateX(-3px);
-            color: #ffffff !important;
-        }
-        .premium-back-btn svg {
-            width: 18px;
-            height: 18px;
-            fill: currentColor;
-            transition: transform 0.3s ease;
-        }
-        .premium-back-btn:hover svg {
-            transform: translateX(-4px);
-        }
-        </style>
-        <div style='text-align: left; padding-left: 5%; margin-bottom: -20px; z-index: 100; position: relative;'>
-                        <a href='https://ali-sypher.github.io/AI_CODE_VAULT_2.0/' class='premium-back-btn'>
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                </svg>
-                Return to Homepage
-            </a>
-        </div>
-    """, unsafe_allow_html=True)
+
     # Only show centered AI CODE VAULT title
     st.markdown('<div class="main-header" style="text-align: center; margin-top: 2rem; font-size: 4.5rem;">AI CODE VAULT 2.0</div>', unsafe_allow_html=True)
     
