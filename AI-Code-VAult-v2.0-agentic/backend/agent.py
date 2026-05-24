@@ -10,7 +10,7 @@ Streamlit UI.  It implements a small agentic team:
 - CodeReviewerAgent: reviews code for quality, security, and performance.
 - TestStrategistAgent: suggests tests and validation plans.
 - DocumentationAgent: creates summaries, docs, and onboarding notes.
-
+- ZipExportAgent: generates a zip file that ca be downloaded.
 The editor intentionally edits the *indexed vault copy* only. It does not write
 back to a remote GitHub repository. Returned patches can be copied into a real
 repo, and an explicit "apply/save/update the vault" request can update the
