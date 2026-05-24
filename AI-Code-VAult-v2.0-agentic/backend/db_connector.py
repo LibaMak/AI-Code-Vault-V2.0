@@ -568,7 +568,7 @@ def query_point_in_time(session, satellite_model, hub_hash, as_of_datetime,
 # DATA VAULT 2.0 — HYBRID SEARCH
 # ============================================================================
 
-def run_hybrid_search(session, query, user_id, top_k=5):
+def run_hybrid_search(session, query, user_id, top_k=15):
     """Hybrid Search using SQL LIKE keyword search and Cosine Similarity Reranking.
     
     1. SQL LIKE keyword search first to filter candidates.
@@ -682,10 +682,20 @@ def run_hybrid_search(session, query, user_id, top_k=5):
     # Query candidate chunks based on matched_files filter or keyword search
     if matched_files:
         # If specific paths/files are targeted, directly retrieve all their chunks
-        code_candidates = session.query(Hub).filter(Hub.user_id == user_id, sa.or_(Hub.status != 'deleted', Hub.status.is_(None)), Hub.hash_key.in_(matched_files)).all()
+        like_file_conds = []
+        for mf in matched_files:
+            clean_mf = mf.split("::")[0]
+            like_file_conds.append(Hub.hash_key.like(f"{clean_mf}%"))
+            
+        code_candidates = session.query(Hub).filter(
+            Hub.user_id == user_id,
+            sa.or_(Hub.status != 'deleted', Hub.status.is_(None)),
+            sa.or_(*like_file_conds)
+        ).all()
         
         doc_candidates = []
         if user_email and user_hash:
+            clean_matched_filenames = list({mf.split("::")[0] for mf in matched_files})
             doc_stmt = sa.select(
                 HubDocument.filename,
                 SatDocumentContent.raw_text,
@@ -705,7 +715,7 @@ def run_hybrid_search(session, query, user_id, top_k=5):
             ).where(
                 LinkUserDocument.hub_user_hash == user_hash,
                 SatDocumentContent.load_end_date.is_(None),
-                HubDocument.filename.in_(matched_files)
+                HubDocument.filename.in_(clean_matched_filenames)
             )
             doc_candidates = session.execute(doc_stmt).all()
     else:

@@ -192,7 +192,8 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str
                                 if len(current_chunk) + len(line) > max_chunk_size:
                                     if current_chunk:
                                         chunk_lines.append(current_chunk)
-                                    current_chunk = line
+                                    # Take the last 100 characters from the previous chunk as overlap
+                                    current_chunk = current_chunk[-100:] + line + "\n"
                                 else:
                                     current_chunk += line + "\n"
                             if current_chunk:

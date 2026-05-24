@@ -169,6 +169,8 @@ def _call_llm(
 
 
 def _run_search(backend: dict, query: str, top_k: int = 5) -> List[dict]:
+    # Ensure a minimum of 15 chunks are retrieved to give agents complete context of files
+    top_k = max(top_k, 15)
     search_fn = backend.get("run_hybrid_search") or backend.get("search_vault")
     if not callable(search_fn):
         return []
