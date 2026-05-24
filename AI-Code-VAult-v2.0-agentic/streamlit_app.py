@@ -1595,7 +1595,8 @@ def process_file_content(uploaded_file, user_id):
                         "type": "chunk",
                         "code": c,
                         "file_path": f"direct_upload/{filename}",
-                        "repo_url": file_repo_url
+                        "repo_url": file_repo_url,
+                        "chunk_id": i
                     }
                     parsed = parse_code_chunk(chunk_obj)
                     if parsed and parsed.get('hub'):

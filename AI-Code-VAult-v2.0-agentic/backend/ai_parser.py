@@ -42,15 +42,18 @@ def _estimate_complexity_from_ast(node: ast.AST) -> str:
     return 'High'
 
 
-def parse_python_code(code_text: str, file_path: str) -> Dict[str, Any]:
+def parse_python_code(code_text: str, file_path: str, chunk_id: int = None) -> Dict[str, Any]:
     """Parse Python code using AST to extract deterministic metadata."""
     try:
         tree = ast.parse(code_text)
     except Exception:
         # parsing failure — return generic chunk
+        hash_key = os.path.basename(file_path) if file_path else 'python_chunk'
+        if chunk_id is not None:
+            hash_key = f"{hash_key}::chunk_{chunk_id}"
         return {
             'hub': {
-                'hash_key': os.path.basename(file_path) if file_path else 'python_chunk',
+                'hash_key': hash_key,
                 'type': 'module',
                 'code_snippet': code_text,
                 'file_path': file_path,
@@ -84,6 +87,9 @@ def parse_python_code(code_text: str, file_path: str) -> Dict[str, Any]:
         hub_type = 'module'
         hash_key = os.path.basename(file_path) if file_path else 'module'
         params = []
+
+    if chunk_id is not None:
+        hash_key = f"{hash_key}::chunk_{chunk_id}"
 
     # Find simple call references (function names) as links
     calls = []
@@ -119,10 +125,15 @@ def fallback_parse(chunk: Dict[str, Any]) -> Dict[str, Any]:
     """Fallback parser when GROQ is not available or parsing fails."""
     code_text = chunk.get('code', '')
     embedding = generate_embedding(code_text)
+    
+    hash_key = chunk.get('name', 'unknown_entity')
+    chunk_id = chunk.get('chunk_id')
+    if chunk_id is not None:
+        hash_key = f"{hash_key}::chunk_{chunk_id}"
 
     return {
         'hub': {
-            'hash_key': chunk.get('name', 'unknown_entity'),
+            'hash_key': hash_key,
             'type': chunk.get('type', 'chunk'),
             'code_snippet': code_text,
             'file_path': chunk.get('file_path', 'unknown'),
@@ -152,11 +163,12 @@ def parse_code_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
 
     file_path = chunk.get('file_path', '')
     file_ext = file_path.split('.')[-1].lower() if '.' in file_path else 'text'
+    chunk_id = chunk.get('chunk_id')
 
     # Fast path: local deterministic parsing for Python
     if file_ext == 'py' or file_ext == 'python' or chunk.get('type') == '.py':
         try:
-            return parse_python_code(code_text, file_path)
+            return parse_python_code(code_text, file_path, chunk_id=chunk_id)
         except Exception as e:
             print(f"[PARSER] AST parse error: {e}. Falling back.")
             return fallback_parse(chunk)
@@ -193,6 +205,11 @@ Output ONLY valid JSON with keys: hub, links, satellite.
         parsed['hub']['code_snippet'] = code_text
         parsed['hub']['file_path'] = file_path
         parsed['hub']['embedding'] = generate_embedding(code_text)
+        
+        # Append chunk_id to LLM-generated hash_key to prevent overwriting
+        if chunk_id is not None:
+            parsed['hub']['hash_key'] = f"{parsed['hub'].get('hash_key', 'chunk')}::chunk_{chunk_id}"
+            
         return parsed
     except Exception:
         return fallback_parse(chunk)

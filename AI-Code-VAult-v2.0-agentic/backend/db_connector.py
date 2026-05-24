@@ -617,13 +617,14 @@ def run_hybrid_search(session, query, user_id, top_k=5):
     # E.g. "backend/agent.py" or "ai-legal-aid-pakistan | prompts.py"
     for f in all_files_sorted:
         normalized_f = f.lower().replace("\\", "/").replace(" ", "")
-        if normalized_f in normalized_query:
+        clean_f = normalized_f.split("::chunk_")[0]
+        if clean_f in normalized_query:
             matched_files.append(f)
             
     # Build map of basename -> list of full paths/filenames
     basename_map = {}
     for f in all_files:
-        f_norm = f.replace("\\", "/")
+        f_norm = f.replace("\\", "/").split("::chunk_")[0]
         base = f_norm.split("/")[-1]
         if base:
             basename_map.setdefault(base.lower(), []).append(f)
@@ -635,9 +636,11 @@ def run_hybrid_search(session, query, user_id, top_k=5):
         for base_lower, full_paths in basename_map.items():
             pattern = r'\b' + re.escape(base_lower) + r'\b'
             if re.search(pattern, query_lower):
-                if len(full_paths) > 1:
-                    # Multiple files match the filename alone!
-                    paths_str = " or ".join(f"'{p}'" for p in full_paths)
+                # Disambiguate only if different files are matched (ignoring chunk indexes)
+                unique_base_files = list({fp.split("::chunk_")[0] for fp in full_paths})
+                if len(unique_base_files) > 1:
+                    # Multiple distinct files match the filename alone!
+                    paths_str = " or ".join(f"'{p}'" for p in unique_base_files)
                     disambig_msg = f"Multiple files found matching '{base_lower}' ({paths_str}). Please specify the full path to get the right answer."
                     disambiguation_result = [{
                         "name": "disambiguation_required",
