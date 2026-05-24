@@ -1,6 +1,0 @@
-.env
-vault_v5.db
-vault_v5.db-shm
-vault_v5.db-wal
-__pycache__/
-*.pyc
