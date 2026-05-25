@@ -713,6 +713,7 @@ def get_db_engine_v4():
 
 engine_v4 = get_db_engine_v4()
 session = Session(engine_v4)
+session.close() # Reset session on every rerun to pull fresh database changes
 
 
 # --- Cached Analytics (FIX 3) ---
