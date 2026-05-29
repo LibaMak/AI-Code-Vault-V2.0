@@ -137,7 +137,10 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str
         List of code chunks with metadata
     """
     chunks = []
-    supported_extensions = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rb', '.php', '.ipynb'}
+    supported_extensions = {
+        '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rb', '.php', '.ipynb',
+        '.md', '.txt', '.sql', '.csv'
+    }
     temp_clone_dir = None
     
     try:
@@ -164,7 +167,11 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str
                 file_path = os.path.join(root, file)
                 ext = os.path.splitext(file)[1].lower()
                 
-                if ext in supported_extensions:
+                # Support README files without extension (e.g. README, readme)
+                is_readme_no_ext = (file.lower() == 'readme' and not ext)
+                
+                if ext in supported_extensions or is_readme_no_ext:
+                    eff_ext = ext if ext else '.txt'
                     try:
                         # Special handling for Jupyter notebooks
                         if ext == '.ipynb':
@@ -205,11 +212,11 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str
                             chunks.append({
                                 'name': file,
                                 'path': file_path,
-                                'type': ext,
+                                'type': eff_ext,
                                 'code': chunk[:max_chunk_size],
                                 'snippet': chunk[:max_chunk_size],
                                 'chunk_id': idx,
-                                'language': ext_to_language(ext),
+                                'language': ext_to_language(eff_ext),
                                 'file_path': file_path,
                                 'repo_url': repo_path  # Add repo_url to metadata
                             })
@@ -219,7 +226,7 @@ def get_repo_chunks(repo_path: str, max_chunk_size: int = 1000) -> List[Dict[str
         
         _log_debug(f"Successfully scanned {len(chunks)} code chunks from {scan_path}")
         if len(chunks) == 0:
-            _log_debug(f"Warning: No supported code files found under {scan_path}. Checked extensions: {sorted(list(supported_extensions))}")
+            _log_debug(f"Warning: No supported files found under {scan_path}. Checked extensions: {sorted(list(supported_extensions))}")
     except Exception as e:
         _log_debug(f"Error scanning repository: {str(e)}")
     finally:
@@ -246,7 +253,11 @@ def ext_to_language(ext: str) -> str:
         '.c': 'c',
         '.go': 'go',
         '.rb': 'ruby',
-        '.php': 'php'
+        '.php': 'php',
+        '.sql': 'sql',
+        '.csv': 'csv',
+        '.md': 'markdown',
+        '.txt': 'text'
     }
     return ext_map.get(ext, 'text')
 

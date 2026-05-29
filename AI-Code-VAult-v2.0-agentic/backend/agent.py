@@ -230,12 +230,34 @@ def _format_sources(results: List[dict], max_chars: int = MAX_CONTEXT_CHARS) -> 
     return "\n".join(chunks)
 
 
+def _clean_source_name(name: str) -> str:
+    if not name or name == "unknown":
+        return "unknown"
+    # If it is code format: repo_name | file_path::logical_name::chunk_id
+    if " | " in name:
+        parts = name.split(" | ")
+        left = parts[0]
+        right = parts[1]
+        # Check if right part contains chunk info
+        if "::" in right:
+            right = right.split("::")[0]
+        elif right.startswith("chunk "):
+            # For documents, e.g. "filename | chunk 1"
+            return left
+        return f"{left} | {right}"
+    # Otherwise fallback
+    if "::" in name:
+        return name.split("::")[0]
+    return name
+
+
 def _source_list(results: List[dict]) -> str:
     names = []
     for r in results:
         n = str(r.get("name", "unknown"))
-        if n not in names:
-            names.append(n)
+        clean_n = _clean_source_name(n)
+        if clean_n not in names and clean_n != "unknown":
+            names.append(clean_n)
     return ", ".join(names) if names else "none"
 
 
@@ -495,7 +517,7 @@ class RAGAnswerAgent(BaseVaultAgent):
                         "role": "system",
                         "content": (
                             "You are a precise RAG engineering assistant. Answer only from the provided vault context. "
-                            "If evidence is missing, say what is missing. You MUST explicitly cite the source filename and approximate location for every claim you make inline."
+                            "If evidence is missing, say what is missing. DO NOT cite source filenames or include inline citations (such as [Source 1], source numbers, or filenames) in the middle of your response. Keep your answer clean and readable. All sources are listed automatically in a reference section at the end, so you do not need to mention them inline."
                         ),
                     },
                     {"role": "user", "content": f"Question:\n{user_message}\n\nVault context:\n{context}"},
@@ -509,7 +531,7 @@ class RAGAnswerAgent(BaseVaultAgent):
                 + "\n\n".join(f"- **{r['name']}** (score {r['score']}): {r['snippet'][:500]}" for r in results[:3])
             )
 
-        sources_list = [r.get("name") for r in results if r.get("name") and r.get("name") != "unknown"]
+        sources_list = [_clean_source_name(r.get("name")) for r in results if r.get("name") and r.get("name") != "unknown"]
         unique_sources = list(dict.fromkeys(sources_list))
         if unique_sources:
             footer = "\n\n### Sources Referenced:\n" + "\n".join(f"- {s}" for s in unique_sources)
@@ -895,7 +917,7 @@ class CodeReviewerAgent(BaseVaultAgent):
             answer = _call_llm(
                 backend,
                 [
-                    {"role": "system", "content": "You are a senior code reviewer. Provide prioritized findings with severity, evidence, and fixes. Cite source names."},
+                    {"role": "system", "content": "You are a senior code reviewer. Provide prioritized findings with severity, evidence, and fixes. Do not include inline file name citations or path references inside your findings; focus entirely on explaining the issues and fixes clearly."},
                     {"role": "user", "content": f"Review request:\n{user_message}\n\nVault context:\n{context}"},
                 ],
                 temperature=0.15,
@@ -946,7 +968,7 @@ class DocumentationAgent(BaseVaultAgent):
             answer = _call_llm(
                 backend,
                 [
-                    {"role": "system", "content": "You are a technical documentation agent. Produce clear markdown docs, summaries, or onboarding notes with source citations."},
+                    {"role": "system", "content": "You are a technical documentation agent. Produce clear markdown docs, summaries, or onboarding notes without inline source citations inside the markdown blocks; all source references will be handled automatically at the end."},
                     {"role": "user", "content": f"Documentation request:\n{user_message}\n\nVault context:\n{context}"},
                 ],
                 temperature=0.2,

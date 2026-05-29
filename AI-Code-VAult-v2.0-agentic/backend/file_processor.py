@@ -28,7 +28,7 @@ def extract_text_from_file(file_path: str) -> str:
             return extract_text_pdf(file_path)
         elif ext == '.docx':
             return extract_text_docx(file_path)
-        elif ext in ['.py', '.js', '.java', '.cpp', '.c', '.go', '.rb', '.php']:
+        elif ext in ['.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rb', '.php', '.sql', '.html', '.css', '.json', '.md']:
             return extract_text_code(file_path)
         else:
             return extract_text_plain(file_path)
@@ -164,7 +164,11 @@ def validate_file(file_path: str, max_size_mb: int = 50) -> Dict[str, Any]:
         }
     
     # Check file extension
-    supported_extensions = {'.txt', '.pdf', '.docx', '.py', '.js', '.java', '.cpp', '.c', '.go', '.rb', '.php', '.csv'}
+    supported_extensions = {
+        '.txt', '.pdf', '.docx', '.py', '.js', '.ts', '.jsx', '.tsx', 
+        '.html', '.css', '.md', '.json', '.sql', '.csv', '.java', 
+        '.cpp', '.c', '.go', '.rb', '.php'
+    }
     ext = os.path.splitext(file_path)[1].lower()
     
     if ext not in supported_extensions:
