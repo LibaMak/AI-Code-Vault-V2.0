@@ -302,17 +302,17 @@ st.markdown("""
     .stApp li,
     .stApp label,
     .stApp small,
-    .stApp span {
+    .stApp span:not(.token):not(pre span):not(code span) {
         color: var(--vault-text);
     }
 
     [data-testid="stMarkdownContainer"] p,
     [data-testid="stMarkdownContainer"] li,
-    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stMarkdownContainer"] span:not(.token):not(pre span):not(code span),
     [data-testid="stMarkdownContainer"] strong,
     [data-testid="stMarkdownContainer"] b,
     [data-testid="stCaptionContainer"] p,
-    [data-testid="stCaptionContainer"] span,
+    [data-testid="stCaptionContainer"] span:not(.token):not(pre span):not(code span),
     [data-testid="stTextInput"] label p,
     [data-testid="stSelectbox"] label p,
     [data-testid="stRadio"] label p,
@@ -328,7 +328,7 @@ st.markdown("""
     [data-testid="stTable"],
     [data-testid="stDataEditor"],
     [data-testid="stSidebar"],
-    [data-testid="stSidebar"] *,
+    [data-testid="stSidebar"] *:not(pre *):not(code *),
     [data-testid="stToolbar"],
     [data-testid="stStatusWidget"],
     [data-testid="stFileUploader"],
@@ -449,23 +449,54 @@ st.markdown("""
         border: 1px solid var(--vault-panel-border) !important;
     }
 
+    /* Buttons (Sidebar, Form, and Main Panels) */
     .stButton>button,
-    .stFormSubmitButton button {
+    .stFormSubmitButton button,
+    [data-testid="stSidebar"] button {
         background: linear-gradient(90deg, var(--vault-accent), var(--vault-accent-2)) !important;
         color: #ffffff !important;
-        border: 1px solid rgba(255, 255, 255, 0.10) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         border-radius: 12px !important;
         padding: 0.8rem 1.2rem !important;
         font-weight: 800 !important;
         letter-spacing: 0.02em !important;
         transition: transform 0.2s ease, box-shadow 0.25s ease !important;
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20) !important;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .stButton>button *,
+    .stFormSubmitButton button *,
+    [data-testid="stSidebar"] button * {
+        color: #ffffff !important;
     }
 
     .stButton>button:hover,
-    .stFormSubmitButton button:hover {
+    .stFormSubmitButton button:hover,
+    [data-testid="stSidebar"] button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 14px 28px rgba(0, 242, 255, 0.22) !important;
+        box-shadow: 0 10px 24px var(--vault-accent) !important;
+    }
+
+    /* Header Bar Overrides for Dark/Light Visibility */
+    [data-testid="stHeader"] {
+        background-color: var(--vault-bg) !important;
+        border-bottom: 1px solid var(--vault-panel-border) !important;
+        transition: background-color 0.3s ease !important;
+    }
+    [data-testid="stHeader"] * {
+        color: var(--vault-text) !important;
+    }
+
+    /* Selectbox child overrides */
+    [data-baseweb="select"] * {
+        color: var(--vault-text) !important;
+    }
+
+    /* Expander styling override */
+    [data-testid="stExpander"] {
+        background-color: var(--vault-surface) !important;
+        border: 1px solid var(--vault-panel-border) !important;
+        border-radius: 12px !important;
     }
 
     .main-header {
@@ -577,19 +608,7 @@ st.markdown("""
         color: var(--vault-accent);
         font-weight: bold;
     }
-    /* Button Glows */
-    .stButton>button {
-        background: linear-gradient(90deg, var(--vault-accent), var(--vault-accent-2)) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 10px !important;
-        padding: 0.8rem 2rem !important;
-        font-weight: 700 !important;
-        transition: box-shadow 0.3s ease !important;
-    }
-    .stButton>button:hover {
-        box-shadow: 0 0 20px var(--vault-glow) !important;
-    }
+    /* Button Glows override removed to prevent conflict */
     .chat-container {
         max-width: 850px;
         margin: 0 auto;
@@ -701,6 +720,54 @@ st.markdown("""
         .stat-card {
             padding: 1rem !important;
         }
+    }
+
+    /* Bottom chat input container styling to match theme background */
+    [data-testid="stBottom"] {
+        background-color: var(--vault-bg) !important;
+    }
+    [data-testid="stBottom"] > div {
+        background-color: transparent !important;
+    }
+    [data-testid="stChatInput"] {
+        background-color: var(--vault-surface) !important;
+        border: 1px solid var(--vault-panel-border) !important;
+        border-radius: 16px !important;
+        box-shadow: var(--vault-shadow) !important;
+    }
+    [data-testid="stChatInput"] div,
+    [data-testid="stChatInput"] textarea {
+        background-color: transparent !important;
+        background: transparent !important;
+        color: var(--vault-text) !important;
+        -webkit-text-fill-color: var(--vault-text) !important;
+    }
+    [data-testid="stChatInput"] button {
+        background-color: var(--vault-accent) !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+    [data-testid="stChatInput"] button:hover {
+        background-color: var(--vault-accent-2) !important;
+    }
+    [data-testid="stChatInput"] button svg {
+        fill: #ffffff !important;
+        color: #ffffff !important;
+    }
+
+    /* Toast Notification styling for both dark and light modes */
+    [data-testid="stToast"],
+    [data-testid="stNotification"],
+    [data-testid="stNotificationContent"] {
+        background-color: var(--vault-surface-strong) !important;
+        border: 1px solid var(--vault-panel-border) !important;
+        border-radius: 12px !important;
+        box-shadow: var(--vault-shadow) !important;
+    }
+    [data-testid="stToast"] *,
+    [data-testid="stNotification"] *,
+    [data-testid="stNotificationContent"] * {
+        color: var(--vault-text) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -2218,8 +2285,8 @@ def render_architect_tab():
             <style>
                 div[data-testid="stChatMessage"] p,
                 div[data-testid="stChatMessage"] li,
-                div[data-testid="stChatMessage"] span,
-                div[data-testid="stChatMessage"] div {
+                div[data-testid="stChatMessage"] span:not(.token):not(pre span):not(code span),
+                div[data-testid="stChatMessage"] div:not(pre *):not(code *) {
                     color: #ffffff !important;
                 }
                 div[data-testid="stChatMessage"] code {
@@ -2260,8 +2327,8 @@ def render_architect_tab():
             <style>
                 div[data-testid="stChatMessage"] p,
                 div[data-testid="stChatMessage"] li,
-                div[data-testid="stChatMessage"] span,
-                div[data-testid="stChatMessage"] div {
+                div[data-testid="stChatMessage"] span:not(.token):not(pre span):not(code span),
+                div[data-testid="stChatMessage"] div:not(pre *):not(code *) {
                     color: var(--vault-text) !important;
                 }
                 div[data-testid="stChatMessage"] code {
