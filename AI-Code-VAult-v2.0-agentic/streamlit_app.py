@@ -450,10 +450,13 @@ st.markdown("""
     }
 
     /* Buttons (Sidebar, Form, and Main Panels) */
-    .stButton>button,
+    .stButton button,
+    div[data-testid="stButton"] button,
     .stFormSubmitButton button,
+    div[data-testid="stFormSubmitButton"] button,
     [data-testid="stSidebar"] button,
-    button[data-testid^="baseButton-"] {
+    button[data-testid^="baseButton-"],
+    button[data-testid^="stBaseButton-"] {
         background: linear-gradient(90deg, var(--vault-accent), var(--vault-accent-2)) !important;
         color: #ffffff !important;
         border: 1px solid rgba(255, 255, 255, 0.15) !important;
@@ -465,17 +468,23 @@ st.markdown("""
         box-shadow: 0 10px 24px rgba(0, 0, 0, 0.15) !important;
     }
 
-    .stButton>button *,
+    .stButton button *,
+    div[data-testid="stButton"] button *,
     .stFormSubmitButton button *,
+    div[data-testid="stFormSubmitButton"] button *,
     [data-testid="stSidebar"] button *,
-    button[data-testid^="baseButton-"] * {
+    button[data-testid^="baseButton-"] *,
+    button[data-testid^="stBaseButton-"] * {
         color: #ffffff !important;
     }
 
-    .stButton>button:hover,
+    .stButton button:hover,
+    div[data-testid="stButton"] button:hover,
     .stFormSubmitButton button:hover,
+    div[data-testid="stFormSubmitButton"] button:hover,
     [data-testid="stSidebar"] button:hover,
-    button[data-testid^="baseButton-"]:hover {
+    button[data-testid^="baseButton-"]:hover,
+    button[data-testid^="stBaseButton-"]:hover {
         transform: translateY(-1px);
         box-shadow: 0 10px 24px var(--vault-accent) !important;
     }
