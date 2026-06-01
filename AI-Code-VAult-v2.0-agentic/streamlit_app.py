@@ -452,7 +452,8 @@ st.markdown("""
     /* Buttons (Sidebar, Form, and Main Panels) */
     .stButton>button,
     .stFormSubmitButton button,
-    [data-testid="stSidebar"] button {
+    [data-testid="stSidebar"] button,
+    button[data-testid^="baseButton-"] {
         background: linear-gradient(90deg, var(--vault-accent), var(--vault-accent-2)) !important;
         color: #ffffff !important;
         border: 1px solid rgba(255, 255, 255, 0.15) !important;
@@ -466,13 +467,15 @@ st.markdown("""
 
     .stButton>button *,
     .stFormSubmitButton button *,
-    [data-testid="stSidebar"] button * {
+    [data-testid="stSidebar"] button *,
+    button[data-testid^="baseButton-"] * {
         color: #ffffff !important;
     }
 
     .stButton>button:hover,
     .stFormSubmitButton button:hover,
-    [data-testid="stSidebar"] button:hover {
+    [data-testid="stSidebar"] button:hover,
+    button[data-testid^="baseButton-"]:hover {
         transform: translateY(-1px);
         box-shadow: 0 10px 24px var(--vault-accent) !important;
     }
@@ -768,6 +771,25 @@ st.markdown("""
     [data-testid="stNotification"] *,
     [data-testid="stNotificationContent"] * {
         color: var(--vault-text) !important;
+    }
+
+    /* Tooltip styling - forces tooltip contents to be high contrast white */
+    div[role="tooltip"] *,
+    [data-testid="stTooltipContent"] * {
+        color: #ffffff !important;
+    }
+
+    /* Table styling - forces HTML tables to adapt nicely to light theme */
+    [data-testid="stTable"] {
+        background-color: var(--vault-surface) !important;
+        color: var(--vault-text) !important;
+        border: 1px solid var(--vault-panel-border) !important;
+    }
+    [data-testid="stTable"] th,
+    [data-testid="stTable"] td {
+        background-color: var(--vault-surface) !important;
+        color: var(--vault-text) !important;
+        border-bottom: 1px solid var(--vault-panel-border) !important;
     }
 </style>
 """, unsafe_allow_html=True)
