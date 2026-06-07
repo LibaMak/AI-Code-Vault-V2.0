@@ -1919,36 +1919,38 @@ def render_profile_tab():
     user_id = st.session_state.user['id']
     user_email = st.session_state.user['email']
     
-    # 1. Fetch User Stats
-    try:
-        from db_connector import Document, Hub, ScanJob, Search
-        num_files = session.query(Document).filter(Document.user_id == user_id, Document.status != 'deleted').count()
-        total_size_bytes = session.query(sa.func.sum(Document.size)).filter(Document.user_id == user_id, Document.status != 'deleted').scalar() or 0
-        total_size_mb = total_size_bytes / (1024 * 1024)
+    user_role = st.session_state.user.get('role', 'User')
+    num_files = 0
+    total_size_mb = 0.0
+    num_snippets = 0
+    num_scan_jobs = 0
+    num_searches = 0
+
+    # 1. Fetch User Stats (only for non-Admins)
+    if user_role != 'Admin':
+        try:
+            from db_connector import Document, Hub, ScanJob, Search
+            num_files = session.query(Document).filter(Document.user_id == user_id, Document.status != 'deleted').count()
+            total_size_bytes = session.query(sa.func.sum(Document.size)).filter(Document.user_id == user_id, Document.status != 'deleted').scalar() or 0
+            total_size_mb = total_size_bytes / (1024 * 1024)
+            
+            num_snippets = session.query(Hub).filter(
+                Hub.user_id == user_id,
+                sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
+            ).count()
+            num_scan_jobs = session.query(ScanJob).filter(ScanJob.user_id == user_id).count()
+            num_searches = session.query(Search).filter(Search.user_id == user_id).count()
+        except Exception as e:
+            st.error(f"Error loading stats: {e}")
         
-        num_snippets = session.query(Hub).filter(
-            Hub.user_id == user_id,
-            sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
-        ).count()
-        num_scan_jobs = session.query(ScanJob).filter(ScanJob.user_id == user_id).count()
-        num_searches = session.query(Search).filter(Search.user_id == user_id).count()
-    except Exception as e:
-        num_files = 0
-        total_size_mb = 0.0
-        num_snippets = 0
-        num_scan_jobs = 0
-        num_searches = 0
-        st.error(f"Error loading stats: {e}")
-        
-    st.markdown("### 📊 Vault Usage Statistics")
-    with st.container():
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Your Indexed Snippets", num_snippets)
-        col2.metric("Scan Jobs Executed", num_scan_jobs)
-        col3.metric("Total Searches", num_searches)
-        st.caption(f"Storage Footprint: {num_files} document(s) utilizing {total_size_mb:.2f} MB of secure vault space.")
-    
-    st.divider()
+        st.markdown("### 📊 Vault Usage Statistics")
+        with st.container():
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Your Indexed Snippets", num_snippets)
+            col2.metric("Scan Jobs Executed", num_scan_jobs)
+            col3.metric("Total Searches", num_searches)
+            st.caption(f"Storage Footprint: {num_files} document(s) utilizing {total_size_mb:.2f} MB of secure vault space.")
+        st.divider()
     
     # 2. Theme Preference
     st.markdown("### 🎨 Theme Configuration")
@@ -2491,77 +2493,16 @@ def render_analytics_tab():
     st.header("Analytics Dashboard")
     user_id = st.session_state.user['id']
     
+    from db_connector import (
+        Document, HubDocument, LinkUserDocument, SatDocumentContent, 
+        SatDocumentEmbedding, FileMetadata, Hub, SearchHistory, Feedback, ChatMessage,
+        Search
+    )
+    
     tab_files, tab_usage, tab_history, tab_perf = st.tabs(["File Manager", "Usage Analytics", "Queries & Feedback", "Performance Metrics"])
     
     with tab_files:
-        st.subheader("Uploaded Files")
-        docs = session.query(Document).filter(Document.user_id == user_id).order_by(Document.upload_date.desc()).all()
-        if docs:
-            for doc in docs:
-                if doc.status == 'deleted':
-                    continue
-                with st.expander(f"📄 {doc.filename} ({doc.size / 1024:.1f} KB)"):
-                    st.write(f"**Uploaded:** {doc.upload_date.strftime('%Y-%m-%d %H:%M:%S')} | **Chunks:** {doc.chunk_count} | **Status:** {doc.status}")
-                    col_btn1, col_btn2 = st.columns(2)
-                    if col_btn1.button("Preview", key=f"prev_{doc.id}"):
-                        first_chunk = session.query(SatDocumentContent).filter(
-                            SatDocumentContent.hub_doc_hash == HubDocument.hash_key,
-                            HubDocument.natural_key == doc.filename,
-                            LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
-                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
-                            SatDocumentContent.chunk_index == 0,
-                            SatDocumentContent.load_end_date.is_(None)
-                        ).first()
-                        if first_chunk and first_chunk.raw_text:
-                            st.code(first_chunk.raw_text[:500] + "...", language="text")
-                        else:
-                            st.info("No content available for preview.")
-                            
-                    if col_btn2.button("Delete (DV2.0 Soft Delete)", key=f"del_{doc.id}", type="primary"):
-                        # Soft delete all document chunks in Data Vault 2.0
-                        chunks = session.query(SatDocumentContent).filter(
-                            SatDocumentContent.hub_doc_hash == HubDocument.hash_key,
-                            HubDocument.natural_key == doc.filename,
-                            LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
-                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
-                            SatDocumentContent.load_end_date.is_(None)
-                        ).all()
-                        for chunk in chunks:
-                            chunk.load_end_date = datetime.now()
-                            
-                        # Soft delete matching embeddings
-                        embeds = session.query(SatDocumentEmbedding).filter(
-                            SatDocumentEmbedding.hub_doc_hash == HubDocument.hash_key,
-                            HubDocument.natural_key == doc.filename,
-                            LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
-                            LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
-                            SatDocumentEmbedding.load_end_date.is_(None)
-                        ).all()
-                        for embed in embeds:
-                            embed.load_end_date = datetime.now()
-
-                        # Soft delete dual-written Hub code chunks
-                        session.query(Hub).filter(
-                            Hub.user_id == user_id,
-                            Hub.repo_url == f"file_upload/{doc.filename}"
-                        ).update({Hub.status: 'deleted'}, synchronize_session=False)
-
-                        # Delete from FileMetadata if any entries exist
-                        session.query(FileMetadata).filter(
-                            FileMetadata.user_id == user_id,
-                            FileMetadata.filename == doc.filename
-                        ).delete()
-                        
-                        doc.status = 'deleted'
-                        session.commit()
-                        st.success(f"{doc.filename} successfully deleted.")
-                        st.rerun()
-        else:
-            st.info("No files uploaded yet.")
-
-        # Indexed Repositories Section
-        st.markdown("---")
-        st.subheader("Indexed Repositories")
+        st.subheader("Indexed Files and Repositories")
         repos = session.query(Hub.repo_url).filter(
             Hub.user_id == user_id,
             sa.or_(Hub.status != 'deleted', Hub.status.is_(None))
@@ -2593,8 +2534,49 @@ def render_analytics_tab():
                         ).all()
                         for h in hubs_to_del:
                             h.status = 'deleted'
+                            
+                        # If it is an uploaded file, also soft-delete Data Vault 2.0 tables
+                        if r_url.startswith("file_upload/"):
+                            filename = r_url.replace("file_upload/", "")
+                            
+                            # Soft delete all document chunks in Data Vault 2.0
+                            chunks = session.query(SatDocumentContent).filter(
+                                SatDocumentContent.hub_doc_hash == HubDocument.hash_key,
+                                HubDocument.filename == filename,
+                                LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
+                                LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
+                                SatDocumentContent.load_end_date.is_(None)
+                            ).all()
+                            for chunk in chunks:
+                                chunk.load_end_date = datetime.now()
+                                
+                            # Soft delete matching embeddings
+                            embeds = session.query(SatDocumentEmbedding).filter(
+                                SatDocumentEmbedding.hub_doc_hash == HubDocument.hash_key,
+                                HubDocument.filename == filename,
+                                LinkUserDocument.hub_doc_hash == HubDocument.hash_key,
+                                LinkUserDocument.hub_user_hash == compute_hash_key(st.session_state.user['email']),
+                                SatDocumentEmbedding.load_end_date.is_(None)
+                            ).all()
+                            for embed in embeds:
+                                embed.load_end_date = datetime.now()
+
+                            # Delete from FileMetadata if any entries exist
+                            session.query(FileMetadata).filter(
+                                FileMetadata.user_id == user_id,
+                                FileMetadata.filename == filename
+                            ).delete()
+                            
+                            # Update Document table status
+                            doc = session.query(Document).filter(
+                                Document.user_id == user_id,
+                                Document.filename == filename
+                            ).first()
+                            if doc:
+                                doc.status = 'deleted'
+                                
                         session.commit()
-                        st.success(f"Repository {r_url} successfully deleted.")
+                        st.success(f"Asset {r_url} successfully deleted.")
                         st.rerun()
         else:
             st.info("No repositories indexed yet.")
